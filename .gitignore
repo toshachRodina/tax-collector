@@ -1,0 +1,52 @@
+# Secrets and credentials
+*.env
+.env*
+secrets.sql
+secrets.json
+*.pem
+*.key
+oauth_token.json
+token.json
+credentials.json
+
+# NEVER commit actual tax documents
+*.pdf
+*.docx
+*.xlsx
+*.csv
+*.png
+*.jpg
+*.jpeg
+/downloads/
+/documents/
+/output/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+*.egg
+
+# Node / Frontend (if added later)
+node_modules/
+.next/
+.env.local
+
+# Logs and temp
+*.log
+/maintenance/logs/
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.idea/
+*.swp
+*.swo

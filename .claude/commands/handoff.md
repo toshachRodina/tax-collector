@@ -1,0 +1,1 @@
+Update CONTEXT.md with a snapshot of what we just did, what decisions were made, and what's next. Be concise — bullet points. Keep the "Key Context for Incoming AI" section intact. Add today's date to "Last updated".

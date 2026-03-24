@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -v '\\\\\\\\\\\\\\\\c taxcollectordb' \"c:/Users/tosha/repos/tax-collector/prod/schema/DDL/999_smoke_test.sql\")",
+      "Bash(for f:*)",
+      "Bash(do echo:*)",
+      "Read(//c/Users/tosha/repos/tax-collector/**)",
+      "Bash(done)",
+      "Bash(ssh -i ~/.ssh/trade_vantage_agent howieds@192.168.0.250 \"docker exec postgres psql -U n8nusr -d taxcollectordb -c \"\"UPDATE ref.statement_providers SET date_format = ''%d %b %y'', description_col = ''Transaction Details'', notes = ''NAB CSV columns \\(verified 2026-03-24\\): Date, Amount, Account Number, Transaction Type, Transaction Details, Balance, Category, Merchant Name, Processed On. Single Amount column — negative = debit, positive = credit. Date format: 24 Mar 26 = %d %b %y. Extra cols captured in raw_json.'' WHERE provider_nme = ''NAB'' RETURNING provider_id, provider_nme, date_format, description_col;\"\"\")",
+      "Bash(ssh -i ~/.ssh/trade_vantage_agent howieds@192.168.0.250 \"docker logs hub-n8n-1 --tail 50 2>&1 | grep -i ''oauth\\\\|unauthorized\\\\|error\\\\|credential'' | tail -30\")",
+      "Bash(ssh -i ~/.ssh/trade_vantage_agent howieds@192.168.0.250 \"docker ps --format ''{{.Names}}'' | grep -i n8n\")",
+      "Bash(ssh -i ~/.ssh/trade_vantage_agent howieds@192.168.0.250 \"docker logs n8n --tail 60 2>&1 | grep -i ''oauth\\\\|unauthorized\\\\|credential\\\\|error'' | tail -30\")"
+    ]
+  }
+}

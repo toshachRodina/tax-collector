@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p \"c:/Users/tosha/repos/tax-collector/prod/schema/DDL\")",
+      "Bash(mkdir -p \"c:/Users/tosha/repos/tax-collector/maintenance/scripts\")",
+      "Bash(ssh -i ~/.ssh/trade_vantage_agent -o StrictHostKeyChecking=no -o ConnectTimeout=10 howieds@192.168.0.250 \"echo ''SSH OK'' && docker ps --format ''{{.Names}}'' | grep postgres\")",
+      "Bash(ssh -i ~/.ssh/trade_vantage_agent howieds@192.168.0.250 \"docker exec postgres psql -U postgres -tAc \"\"SELECT datname FROM pg_database WHERE datname = ''taxcollectordb'';\"\"\")",
+      "Bash(ssh -i ~/.ssh/trade_vantage_agent howieds@192.168.0.250 \"docker exec postgres psql -U taxcollectorusr -tAc \"\"SELECT current_user;\"\" 2>/dev/null || docker exec postgres psql -tAc \"\"SELECT current_user;\"\" 2>&1 | head -5\")",
+      "Bash(ssh -i ~/.ssh/trade_vantage_agent howieds@192.168.0.250 \"docker exec postgres psql -U tradvantusr -tAc \"\"SELECT usename FROM pg_user;\"\" 2>&1 | head -20\")",
+      "Bash(ssh -i ~/.ssh/trade_vantage_agent howieds@192.168.0.250 \"docker inspect postgres 2>/dev/null | python3 -c \"\"import json,sys; d=json.load\\(sys.stdin\\); env=[e for e in d[0][''Config''][''Env''] if ''POSTGRES'' in e]; print\\(''\\\\n''.join\\(env\\)\\)\"\"\")",
+      "Bash(ssh -i ~/.ssh/trade_vantage_agent howieds@192.168.0.250 \"PGPASSWORD=''morganskye$1'' psql -h 192.168.0.250 -U n8nusr -tAc \"\"SELECT datname FROM pg_database ORDER BY datname;\"\"\")",
+      "Bash(ssh -i ~/.ssh/trade_vantage_agent howieds@192.168.0.250 \"docker exec postgres psql -U n8nusr -tAc \"\"SELECT datname FROM pg_database ORDER BY datname;\"\"\")",
+      "Bash(ssh -i ~/.ssh/trade_vantage_agent howieds@192.168.0.250 \"docker exec postgres psql -U n8nusr -d n8ndb -tAc \"\"SELECT datname FROM pg_database ORDER BY datname;\"\"\")",
+      "Bash(ssh -i ~/.ssh/trade_vantage_agent howieds@192.168.0.250 \"docker exec postgres psql -U n8nusr -d n8ndb -c \"\":*)",
+      "Bash(ssh -i ~/.ssh/trade_vantage_agent howieds@192.168.0.250 \"docker exec postgres psql -U n8nusr -d taxcollectordb -c \"\":*)",
+      "Bash(grep -v '\\\\\\\\\\\\\\\\c taxcollectordb' \"c:/Users/tosha/repos/tax-collector/prod/schema/DDL/001_ctl_schema.sql\")",
+      "Bash(ssh -i ~/.ssh/trade_vantage_agent howieds@192.168.0.250 \"docker exec -i postgres psql -U n8nusr -d taxcollectordb\")",
+      "Bash(grep -v '\\\\\\\\\\\\\\\\c taxcollectordb' \"c:/Users/tosha/repos/tax-collector/prod/schema/DDL/002_ref_schema.sql\")",
+      "Bash(grep -v '\\\\\\\\\\\\\\\\c taxcollectordb' \"c:/Users/tosha/repos/tax-collector/prod/schema/DDL/003_ref_seed.sql\")",
+      "Bash(grep -v '\\\\\\\\\\\\\\\\c taxcollectordb' \"c:/Users/tosha/repos/tax-collector/prod/schema/DDL/004_landing_schema.sql\")",
+      "Bash(ssh -i ~/.ssh/trade_vantage_agent howieds@192.168.0.250 \"docker logs n8n --since 2026-03-24T00:00:00 2>&1 | tail -50\")",
+      "Bash(ssh -i ~/.ssh/trade_vantage_agent howieds@192.168.0.250 \"docker inspect n8n | python3 -c \"\"import json,sys; d=json.load\\(sys.stdin\\)[0]; e=d[''Config''][''Env'']; [print\\(x\\) for x in e if any\\(k in x for k in [''N8N'',''WEBHOOK'',''BASE_URL'',''DB_'',''QUEUE'']\\)]\"\" 2>&1\")",
+      "Bash(ssh -i ~/.ssh/trade_vantage_agent howieds@192.168.0.250 \"docker inspect n8n --format ''{{.Config.Image}}'' && docker exec n8n n8n --version 2>/dev/null || docker inspect n8n --format ''{{.Config.Image}}''\")",
+      "Bash(ssh -i ~/.ssh/trade_vantage_agent howieds@192.168.0.250 \"docker inspect n8n --format ''Started: {{.State.StartedAt}}'' && docker inspect n8n-worker --format ''Worker started: {{.State.StartedAt}}''\")",
+      "Bash(ssh -i ~/.ssh/trade_vantage_agent howieds@192.168.0.250 \"curl -s http://192.168.0.93:11434/api/tags 2>/dev/null\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); [print\\(f{m[''''name'''']:50} {m[''''size'''']//1024//1024//1024}GB\\) for m in d[''''models'''']]\")",
+      "Bash(ssh -i ~/.ssh/trade_vantage_agent howieds@192.168.0.250 \"curl -s http://192.168.0.93:11434/api/tags\")",
+      "Bash(ssh -i ~/.ssh/trade_vantage_agent howieds@192.168.0.250 \"sudo mkdir -p /opt/tax-collector/{scripts,config,logs} && sudo chown -R howieds:howieds /opt/tax-collector && ls -la /opt/tax-collector/\")",
+      "Bash(ssh -i ~/.ssh/trade_vantage_agent howieds@192.168.0.250 \"mkdir -p ~/tax-collector/{scripts,config,logs} && ls -la ~/tax-collector/\")",
+      "Bash(ssh -i ~/.ssh/trade_vantage_agent howieds@192.168.0.250 \"docker exec -i postgres psql -U taxcollectorusr -d taxcollectordb\")",
+      "Bash(ssh -i ~/.ssh/trade_vantage_agent howieds@192.168.0.250 \"ls /mnt/disk2/data/tax-collector/\")",
+      "Read(//c/Users/tosha/repos/trade-vantage-v2/**)",
+      "Bash(ls -la *.json)",
+      "Bash(grep -o \"/data/scripts.*\\\\.py\" *.json)",
+      "Bash(gh auth:*)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\tosha\\repos\\homelab-hub"
+    ]
+  }
+}
