@@ -1,0 +1,210 @@
+{
+  "name": "EXTRACT_GMAIL",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -912,
+        64
+      ],
+      "id": "13bc2e5e-af06-4689-82c4-3ab03b7ac4d6",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -912,
+        -128
+      ],
+      "id": "b9a64f0a-05f5-491f-97db-a16d61e1cb5f",
+      "name": "Manual Execution"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO ctl.process_log (workflow_nme, script_nme, status, started_at)\nVALUES ('TC_EXTRACT_GMAIL', 'TC_EXTRACT_GMAIL.json', 'STARTED', NOW())\nRETURNING batch_id;",
+        "options": {}
+      },
+      "id": "f9d47408-5fdf-4c3e-b992-ceb499e48625",
+      "name": "Start Batch",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        -736,
+        -32
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GhZL6n0TTt2R9eJ7",
+          "name": "Tax Collector DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(\n    MAX(EXTRACT(EPOCH FROM received_at) * 1000)::bigint,\n    CASE\n        WHEN EXTRACT(MONTH FROM CURRENT_DATE) >= 7\n        THEN EXTRACT(EPOCH FROM MAKE_DATE(EXTRACT(YEAR FROM CURRENT_DATE)::int - 1, 7, 1))::bigint * 1000\n        ELSE EXTRACT(EPOCH FROM MAKE_DATE(EXTRACT(YEAR FROM CURRENT_DATE)::int - 2, 7, 1))::bigint * 1000\n    END\n) AS watermark_ms\nFROM core.tax_documents\nWHERE 1 = 1\n  AND source_type = 'GMAIL';",
+        "options": {}
+      },
+      "id": "12fdfa6b-8ee5-464c-bb5f-ef9fc76bf11d",
+      "name": "Get Watermark",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        -416,
+        -32
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GhZL6n0TTt2R9eJ7",
+          "name": "Tax Collector DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const today = new Date();\nconst fyEndYear = today.getMonth() >= 6 ? today.getFullYear() + 1 : today.getFullYear();\n\n// TEMP: 3-month window for testing â€” revert to watermark after end-to-end test passes\nconst afterDate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);\n\nconst batchId = $items(\"Start Batch\")[0].json.batch_id;\n\nconst fmt = (d) => `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`;\nconst fyEndDate = new Date(fyEndYear, 5, 30);\nconst beforeDate = today < fyEndDate ? today : fyEndDate;\n\nconst query = `has:attachment filename:pdf after:${fmt(afterDate)} before:${fmt(beforeDate)}`;\n\nreturn [{ json: { query, batchId, fyEndYear, afterDate: afterDate.toISOString(), beforeDate: beforeDate.toISOString() } }];"
+      },
+      "id": "83651e4c-3a0a-49fa-8b1d-ae755e0116e3",
+      "name": "Build Gmail Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -256,
+        -32
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "returnAll": true,
+        "filters": {
+          "q": "={{ $json.query }}"
+        }
+      },
+      "id": "b0b50ea5-2e39-465e-9052-01285582e376",
+      "name": "Gmail Get All Messages",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [
+        -80,
+        -32
+      ],
+      "webhookId": "46eadc7a-7e68-4ef9-8177-ee44f037c713",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "WcOe7o1be8G2TzJ4",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM landing.tax_documents;",
+        "options": {}
+      },
+      "id": "5a31779d-66ee-4d4c-9661-0e99770f4df8",
+      "name": "Truncate Landing",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        -576,
+        -32
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GhZL6n0TTt2R9eJ7",
+          "name": "Tax Collector DB"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Manual Execution": {
+      "main": [
+        [
+          {
+            "node": "Start Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start Batch": {
+      "main": [
+        [
+          {
+            "node": "Truncate Landing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Start Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Gmail Query": {
+      "main": [
+        [
+          {
+            "node": "Gmail Get All Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Watermark": {
+      "main": [
+        [
+          {
+            "node": "Build Gmail Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Truncate Landing": {
+      "main": [
+        [
+          {
+            "node": "Get Watermark",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "6d9cd8ad-4761-43ac-a650-bcb1ff5987f0",
+  "meta": {
+    "instanceId": "2368e69b5c080df17f325116bff5beaa65186ed8d19ea4dc43edb77db5ef060f"
+  },
+  "id": "bKowCBTAhzRO3rmKEPQ8y",
+  "tags": []
+}

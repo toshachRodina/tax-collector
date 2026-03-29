@@ -1,0 +1,327 @@
+{
+  "name": "LOAD_CORE_TAX_DOCS",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "6496fb8b-e368-4b66-80ea-7a9283575f73",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        1216,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "265587b1-fecb-4ece-ab3e-c13712792d20",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        1216,
+        -192
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO ctl.process_log (workflow_nme, script_nme, status, started_at)\nVALUES ('TC_LOAD_CORE_TAX_DOCS', 'sp_merge_tax_documents', 'STARTED', NOW())\nRETURNING batch_id;",
+        "options": {}
+      },
+      "id": "ba4864f8-f6a3-489f-966b-ce561f4b3350",
+      "name": "Start Batch",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1392,
+        -96
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GhZL6n0TTt2R9eJ7",
+          "name": "Tax Collector DB"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const batchId = $input.first().json.batch_id;\nreturn [{ json: { batch_id: batchId } }];"
+      },
+      "id": "aa33f262-f24d-4b88-9146-ba37f2d3e165",
+      "name": "Set Batch ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1552,
+        -176
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CALL core.sp_merge_tax_documents(NULL);",
+        "options": {}
+      },
+      "id": "5cb937b6-dcff-4ee0-9aa6-2657bebaf2d2",
+      "name": "Merge to Core",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1712,
+        -176
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "GhZL6n0TTt2R9eJ7",
+          "name": "Tax Collector DB"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  COUNT(*) FILTER (WHERE review_status = 'AUTO_CONFIRMED') AS auto_confirmed,\n  COUNT(*) FILTER (WHERE review_status = 'NEEDS_REVIEW')   AS needs_review,\n  COUNT(*) FILTER (WHERE review_status = 'AUTO_REJECTED')  AS auto_rejected,\n  COUNT(*) AS total\nFROM core.tax_documents;",
+        "options": {}
+      },
+      "id": "3a30ef83-1349-4cf5-b6e6-460df6395cec",
+      "name": "Get Counts",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1888,
+        -176
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "GhZL6n0TTt2R9eJ7",
+          "name": "Tax Collector DB"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE ctl.process_log\nSET status       = 'SUCCESS',\n    rows_extracted = {{ $json.total }},\n    rows_loaded    = {{ $json.auto_confirmed }},\n    completed_at   = NOW()\nWHERE batch_id = {{ $items('Set Batch ID')[0].json.batch_id }};",
+        "options": {}
+      },
+      "id": "8917582d-4d5b-4c9f-99f4-46d2ace99496",
+      "name": "Complete Batch",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        2048,
+        -176
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GhZL6n0TTt2R9eJ7",
+          "name": "Tax Collector DB"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE ctl.process_log\nSET status       = 'FAILED',\n    error_msg    = '{{ $json.message.replace(/'/g, \"''\") }}',\n    completed_at = NOW()\nWHERE batch_id = {{ $items('Set Batch ID')[0].json.batch_id }};",
+        "options": {}
+      },
+      "id": "3340559e-e3da-4a95-bf8a-feef7a39527c",
+      "name": "Fail Batch",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        2224,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GhZL6n0TTt2R9eJ7",
+          "name": "Tax Collector DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "toshach@gmail.com",
+        "subject": "=TC_LOAD_CORE_TAX_DOCS FAILED — {{ $now.toISO() }}",
+        "message": "=<p>The <strong>TC_LOAD_CORE_TAX_DOCS</strong> workflow failed.</p>\n<p><strong>Error:</strong> {{ $json.message }}</p>\n<p><strong>Batch ID:</strong> {{ $items('Set Batch ID')[0].json.batch_id }}</p>\n<p>Check <code>ctl.process_log</code> for details.</p>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "7ea32f1a-100d-4f26-822b-70bb3d1a584a",
+      "name": "Send Error Alert",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2368,
+        0
+      ],
+      "webhookId": "b3324085-43bc-42d7-9df8-9e227a377fd5",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "WcOe7o1be8G2TzJ4",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "errorMessage": "=TC_LOAD_CORE_TAX_DOCS failed: {{ $json.message }}"
+      },
+      "id": "6d529818-4751-4346-b095-633edd0147e1",
+      "name": "Stop And Error",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        2512,
+        0
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Start Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Start Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start Batch": {
+      "main": [
+        [
+          {
+            "node": "Set Batch ID",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fail Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Batch ID": {
+      "main": [
+        [
+          {
+            "node": "Merge to Core",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge to Core": {
+      "main": [
+        [
+          {
+            "node": "Get Counts",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fail Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Counts": {
+      "main": [
+        [
+          {
+            "node": "Complete Batch",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fail Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complete Batch": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Fail Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fail Batch": {
+      "main": [
+        [
+          {
+            "node": "Send Error Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Error Alert": {
+      "main": [
+        [
+          {
+            "node": "Stop And Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "e53914db-7659-4111-b400-d7f96adbfc2e",
+  "meta": {
+    "instanceId": "2368e69b5c080df17f325116bff5beaa65186ed8d19ea4dc43edb77db5ef060f"
+  },
+  "id": "n3HnEC6y2NE651YAMXW6t",
+  "tags": []
+}

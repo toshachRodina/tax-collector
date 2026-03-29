@@ -1,0 +1,890 @@
+{
+  "name": "TC_EXTRACT_GMAIL",
+  "active": false,
+  "tags": [
+    {
+      "name": "tax-collector"
+    }
+  ],
+  "settings": {
+    "errorWorkflow": "oFeU0bOzAsRxU910",
+    "executionTimeout": 600,
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "nodes": [
+    {
+      "id": "a1b2c3d4-0001-0001-0001-000000000001",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -220,
+        220
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "a1b2c3d4-0024-0024-0024-000000000024",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        -220,
+        380
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "a1b2c3d4-0002-0002-0002-000000000002",
+      "name": "Start Batch",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO ctl.process_log (workflow_nme, script_nme, status, started_at)\nVALUES ('TC_EXTRACT_GMAIL', 'TC_EXTRACT_GMAIL.json', 'STARTED', NOW())\nRETURNING batch_id;"
+      },
+      "credentials": {
+        "postgres": {
+          "id": "GhZL6n0TTt2R9eJ7",
+          "name": "Tax Collector DB"
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0030-0030-0030-000000000030",
+      "name": "Truncate Landing",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM landing.tax_documents;"
+      },
+      "credentials": {
+        "postgres": {
+          "id": "GhZL6n0TTt2R9eJ7",
+          "name": "Tax Collector DB"
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0003-0003-0003-000000000003",
+      "name": "Get Watermark",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(\n    (EXTRACT(EPOCH FROM (MAX(received_at) - INTERVAL '3 days')) * 1000)::bigint,\n    EXTRACT(EPOCH FROM TIMESTAMP '2022-07-01 00:00:00+00')::bigint * 1000\n) AS watermark_ms\nFROM core.tax_documents\nWHERE source_type = 'GMAIL';"
+      },
+      "credentials": {
+        "postgres": {
+          "id": "GhZL6n0TTt2R9eJ7",
+          "name": "Tax Collector DB"
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0004-0004-0004-000000000004",
+      "name": "Build Gmail Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst watermarkMs = items[0].json.watermark_ms;\nconst afterDate = new Date(watermarkMs);\n\nconst batchId = $items('Start Batch')[0].json.batch_id;\n\nconst fmt = (d) => d.getFullYear() + '/' + String(d.getMonth()+1).padStart(2,'0') + '/' + String(d.getDate()).padStart(2,'0');\n\nconst today = new Date();\nconst query = 'has:attachment filename:pdf after:' + fmt(afterDate) + ' before:' + fmt(today);\n\nreturn [{ json: { query, batchId, afterDate: afterDate.toISOString(), beforeDate: today.toISOString() } }];"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0005-0005-0005-000000000005",
+      "name": "Gmail Get All Messages",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [
+        880,
+        300
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "getAll",
+        "returnAll": true,
+        "filters": {
+          "q": "={{ $json.query }}"
+        },
+        "options": {
+          "format": "full"
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "WcOe7o1be8G2TzJ4",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0006-0006-0006-000000000006",
+      "name": "Tag Messages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// runOnceForAllItems â€” avoids $json Proxy entirely.\nlet batchId = null;\ntry {\n  const bqItems = $items('Build Gmail Query');\n  if (bqItems && bqItems.length > 0) {\n    const bqJson = JSON.parse(JSON.stringify(bqItems[0].json));\n    batchId = bqJson.batchId !== undefined ? bqJson.batchId : null;\n  }\n} catch(e) { batchId = null; }\n\nreturn $input.all().map(function(item) {\n  const msg = JSON.parse(JSON.stringify(item.json));\n\n  const msgId          = String(msg.id || '');\n  const internalDateMs = parseInt(String(msg.internalDate || '0'), 10);\n  const snippet        = String(msg.snippet || '');\n  const mimeType       = String(msg.payload && msg.payload.mimeType ? msg.payload.mimeType : '');\n  const subject        = String(msg.Subject || '');\n  const from           = String(msg.From || '');\n  const senderEmail    = from.includes('<')\n    ? from.split('<')[1].replace('>', '').trim()\n    : from;\n\n  const hasAttachment  = true; // Gmail query guarantees has:attachment filename:pdf\n  const stagingFilename = msgId + '_attachment.pdf';\n  const stagingPath    = '/data/tax-collector/staging/' + stagingFilename;\n\n  const metaJson = JSON.stringify({\n    source_id: msgId,\n    subject: subject,\n    sender_email: senderEmail,\n    received_at: new Date(internalDateMs).toISOString(),\n    file_name: stagingFilename,\n    file_ext: 'pdf',\n    file_size_bytes: null\n  });\n\n  return {\n    json: {\n      id: msgId,\n      threadId: String(msg.threadId || ''),\n      internalDate: String(msg.internalDate || '0'),\n      snippet: snippet,\n      sizeEstimate: Number(msg.sizeEstimate || 0),\n      Subject: subject,\n      From: from,\n      _tc: {\n        hasAttachment: Boolean(hasAttachment),\n        stagingPath: stagingPath,\n        metaJson: metaJson,\n        subject: subject,\n        senderEmail: senderEmail,\n        internalDateMs: Number(internalDateMs),\n        batchId: batchId\n      }\n    }\n  };\n});"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0007-0007-0007-000000000007",
+      "name": "Has Attachment?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-001",
+              "leftValue": "={{ $json._tc.hasAttachment }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0008-0008-0008-000000000008",
+      "name": "HTTP Get Full Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        160
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://www.googleapis.com/gmail/v1/users/me/messages/{{ $json.id }}?format=full",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "options": {}
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "WcOe7o1be8G2TzJ4",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0025-0025-0025-000000000025",
+      "name": "Find Attachment Meta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1650,
+        160
+      ],
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nfunction isPdfPart(p) {\n  var mt = (p.mimeType || '').toLowerCase();\n  var fn = (p.filename || '').toLowerCase();\n  return mt.indexOf('pdf') !== -1 || fn.endsWith('.pdf');\n}\n\nfunction findPdfAttachments(parts) {\n  var found = [];\n  if (!parts || !Array.isArray(parts)) return found;\n  for (var i = 0; i < parts.length; i++) {\n    var p = parts[i];\n    var hasContent = p.body && (p.body.attachmentId || (p.body.data && p.body.data.length > 0));\n    if (isPdfPart(p) && hasContent) {\n      found.push({\n        attachmentId: p.body.attachmentId || null,\n        inlineData: p.body.data || null,\n        filename: p.filename || 'attachment.pdf',\n        mimeType: p.mimeType || 'application/pdf'\n      });\n    }\n    if (p.parts) {\n      var nested = findPdfAttachments(p.parts);\n      for (var j = 0; j < nested.length; j++) found.push(nested[j]);\n    }\n  }\n  return found;\n}\n\nreturn items.map(function(item) {\n  var msg = item.json;\n  var messageId = String(msg.id || '');\n  var parts = (msg.payload && msg.payload.parts) ? msg.payload.parts : [];\n  var attachments = findPdfAttachments(parts);\n\n  // Also check top-level payload itself\n  if (attachments.length === 0 && msg.payload) {\n    var p = msg.payload;\n    var hasContent = p.body && (p.body.attachmentId || (p.body.data && p.body.data.length > 0));\n    if (isPdfPart(p) && hasContent) {\n      attachments = [{ attachmentId: p.body.attachmentId || null, inlineData: p.body.data || null, filename: p.filename || 'attachment.pdf', mimeType: p.mimeType || 'application/pdf' }];\n    }\n  }\n\n  var first = attachments.length > 0 ? attachments[0] : null;\n  var stagingPath = '/data/tax-collector/staging/' + messageId + '_attachment.pdf';\n  var metaJson = '{}';\n  var batchId = null;\n  try {\n    var tagItems = $items('Tag Messages');\n    for (var k = 0; k < tagItems.length; k++) {\n      var tj = JSON.parse(JSON.stringify(tagItems[k].json));\n      if (tj.id === messageId) {\n        if (tj._tc && tj._tc.stagingPath) stagingPath = tj._tc.stagingPath;\n        if (tj._tc && tj._tc.metaJson) metaJson = tj._tc.metaJson;\n        if (tj._tc && tj._tc.batchId != null) batchId = tj._tc.batchId;\n        break;\n      }\n    }\n  } catch(e) {}\n\n  if (!first) {\n    return { json: { messageId: messageId, stagingPath: stagingPath, metaJson: metaJson, batchId: batchId, _noAttachmentFound: true } };\n  }\n  return { json: { messageId: messageId, attachmentId: first.attachmentId, inlineData: first.inlineData, attachmentFilename: first.filename, attachmentMimeType: first.mimeType, stagingPath: stagingPath, metaJson: metaJson, batchId: batchId, _noAttachmentFound: false } };\n});"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0026-0026-0026-000000000026",
+      "name": "HTTP Get Attachment Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        160
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://www.googleapis.com/gmail/v1/users/me/messages/{{ $json.messageId }}/attachments/{{ $json.attachmentId }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "options": {}
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "WcOe7o1be8G2TzJ4",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0027-0027-0027-000000000027",
+      "name": "Prepare Command Args",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1930,
+        160
+      ],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "assign-staging-path",
+              "name": "stagingPath",
+              "value": "={{ $('Find Attachment Meta').item.json.stagingPath }}",
+              "type": "string"
+            },
+            {
+              "id": "assign-pdf-data",
+              "name": "pdfData",
+              "value": "={{ $json.data }}",
+              "type": "string"
+            },
+            {
+              "id": "assign-meta-encoded",
+              "name": "metaEncoded",
+              "value": "={{ encodeURIComponent($('Find Attachment Meta').item.json.metaJson).replace(/'/g, '%27') }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-0010-0010-0010-000000000010",
+      "name": "Write and Process",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        2470,
+        160
+      ],
+      "parameters": {
+        "command": "=timeout 570 python3 /data/tax-collector/scripts/process_document.py --file '{{ $json.stagingPath }}' --meta-encoded '{{ $json.metaEncoded }}' --source-type GMAIL"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0011-0011-0011-000000000011",
+      "name": "Check Exit Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2680,
+        160
+      ],
+      "parameters": {
+        "jsCode": "var cmdItems = $input.all();\n\nvar batchId = null;\ntry {\n  var bqItems = $items('Build Gmail Query');\n  if (bqItems && bqItems.length > 0) {\n    var bqJson = JSON.parse(JSON.stringify(bqItems[0].json));\n    if (bqJson.batchId !== undefined) batchId = bqJson.batchId;\n  }\n} catch(e) {}\n\nreturn cmdItems.map(function(item) {\n  var raw = JSON.parse(JSON.stringify(item.json));\n  var exitCode = raw.exitCode !== undefined ? Number(raw.exitCode) : 0;\n  return {\n    json: {\n      exitCode: exitCode,\n      _success: exitCode === 0,\n      batchId: batchId,\n      stdout: String(raw.stdout || ''),\n      stderr: String(raw.stderr || '')\n    }\n  };\n});"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0012-0012-0012-000000000012",
+      "name": "Extract Body Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        440
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const bodyText = $json.snippet || '';\n\nreturn [{\n  json: {\n    id: $json.id,\n    threadId: $json.threadId || '',\n    internalDate: $json.internalDate || '0',\n    Subject: $json.Subject || '',\n    From: $json.From || '',\n    _tc: {\n      ...$json._tc,\n      bodyText: bodyText.substring(0, 4000)\n    }\n  }\n}];"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0013-0013-0013-000000000013",
+      "name": "Ollama Classify Body",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        440
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "parameters": {
+        "method": "POST",
+        "url": "http://192.168.0.93:11434/api/generate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"qwen2.5:14b\",\n  \"stream\": false,\n  \"format\": \"json\",\n  \"prompt\": \"You are an Australian tax document classifier. Classify the following email and return JSON.\\n\\nEmail subject: {{ $json._tc.subject }}\\nEmail text: {{ $json._tc.bodyText }}\\n\\nReturn ONLY JSON: {\\\"category\\\": \\\"<one of the valid categories>\\\", \\\"fy_year\\\": <int>, \\\"is_deductible\\\": <bool>, \\\"deductible_amount\\\": <num|null>, \\\"confidence\\\": <0.0-1.0>, \\\"summary\\\": \\\"<one sentence>\\\"}\\n\\nValid categories: Payment Summary / Group Certificate, Bank Interest Statement, Dividend Statement, Share Sale / CGT Event, Work From Home — Internet, Work From Home — Electricity/Gas, Work From Home — Insurance, Technology Equipment, Software & Subscriptions, Professional Development, Professional Memberships, Income Protection Insurance, Rental Income Statement, Property Depreciation Schedule, ATO Notice / Assessment, HECS/HELP Statement, Superannuation Statement, Super Contribution Notice, Private Health Insurance Statement, Invoice / Receipt — Other\\n\\nAustralian tax year July 1 to June 30. FY2025 = July 2024 to June 2025. If uncertain use Invoice / Receipt — Other.\"\n}",
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0014-0014-0014-000000000014",
+      "name": "Parse Ollama Build Landing Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        440
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const msg = $items(\"Extract Body Text\")[$itemIndex].json;\nconst ollamaRaw = $json?.response || '{}';\nlet classification;\ntry {\n  classification = JSON.parse(ollamaRaw);\n} catch(e) {\n  classification = { category: 'Invoice / Receipt — Other', fy_year: null, is_deductible: false, confidence: 0.0 };\n}\n\nconst batchId = msg._tc?.batchId;\nconst today = new Date();\nconst fyYear = (classification.fy_year >= 2020 && classification.fy_year <= 2035)\n  ? classification.fy_year\n  : (today.getMonth() >= 6 ? today.getFullYear() + 1 : today.getFullYear());\n\n// Escape single quotes for SQL template substitution\nconst esc = (s) => (s || '').replace(/'/g, \"''\");\n\nreturn [{\n  json: {\n    source_type: 'GMAIL',\n    source_id: msg.id,\n    subject: esc(msg._tc?.subject),\n    sender_email: esc(msg._tc?.senderEmail),\n    received_at: new Date(msg._tc?.internalDateMs || Date.now()).toISOString(),\n    file_name: null,\n    file_ext: null,\n    file_size_bytes: null,\n    content_preview: esc((msg._tc?.bodyText || '').substring(0, 500)),\n    raw_json: esc(JSON.stringify({ classification, body_text_length: (msg._tc?.bodyText || '').length })),\n    batch_id: batchId\n  }\n}];"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0015-0015-0015-000000000015",
+      "name": "Insert Body Landing Row",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        440
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO landing.tax_documents\n    (source_type, source_id, subject, sender_email, received_at,\n     file_name, file_ext, file_size_bytes, content_preview, raw_json, batch_id)\nVALUES\n    ('{{ $json.source_type }}', '{{ $json.source_id }}', '{{ $json.subject }}',\n     '{{ $json.sender_email }}', '{{ $json.received_at }}',\n     null, null, null,\n     '{{ $json.content_preview }}', '{{ $json.raw_json }}', {{ $json.batch_id }})\nON CONFLICT (source_type, source_id, COALESCE(file_name, '')) DO NOTHING;"
+      },
+      "credentials": {
+        "postgres": {
+          "id": "GhZL6n0TTt2R9eJ7",
+          "name": "Tax Collector DB"
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0017-0017-0017-000000000017",
+      "name": "Merge Branches",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        2530,
+        300
+      ],
+      "parameters": {
+        "mode": "append"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0018-0018-0018-000000000018",
+      "name": "Aggregate Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2750,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const allItems = $input.all();\nconst rowsExtracted = allItems.length;\nlet rowsLoaded = 0;\nlet rowsSkipped = 0;\n\nallItems.forEach(item => {\n  if (item.json.exitCode !== undefined) {\n    if (item.json.exitCode === 0) rowsLoaded++; else rowsSkipped++;\n  } else {\n    rowsLoaded++;\n  }\n});\n\nconst batchId = $items(\"Build Gmail Query\")[0]?.json?.batchId;\nreturn [{ json: { batchId, rowsExtracted, rowsLoaded, rowsSkipped } }];"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0020-0020-0020-000000000020",
+      "name": "Complete Batch",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        2970,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE ctl.process_log\nSET status = 'SUCCESS', rows_extracted = {{ $json.rowsExtracted }}, rows_loaded = {{ $json.rowsLoaded }}, rows_skipped = {{ $json.rowsSkipped }}, completed_at = NOW()\nWHERE batch_id = {{ $json.batchId }};"
+      },
+      "credentials": {
+        "postgres": {
+          "id": "GhZL6n0TTt2R9eJ7",
+          "name": "Tax Collector DB"
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0031-0031-0031-000000000031",
+      "name": "Has Attachment ID?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1870,
+        160
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond-attach-id",
+              "leftValue": "={{ $json.attachmentId }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0032-0032-0032-000000000032",
+      "name": "Build Inline Args",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2090,
+        320
+      ],
+      "parameters": {
+        "jsCode": "const meta = $input.first().json;\nreturn [{\n  json: {\n    stagingPath: meta.stagingPath,\n    pdfData: meta.inlineData,\n    metaEncoded: encodeURIComponent(meta.metaJson || \"{}\").replace(/'/g, \"%27\")\n  }\n}];"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0033-0033-0033-000000000033",
+      "name": "Merge Attachment Data",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        2380,
+        160
+      ],
+      "parameters": {
+        "mode": "append"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0034-0034-0034-000000000034",
+      "name": "Write PDF with fs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2550,
+        160
+      ],
+      "parameters": {
+        "jsCode": "const nodeFs = require(\"fs\");\nconst nodePath = require(\"path\");\nconst pdfData = $json.pdfData;\nconst stagingPath = $json.stagingPath;\nconst metaEncoded = $json.metaEncoded;\n\nif (!pdfData) {\n  // No PDF data found for this email — skip silently\n  return [];\n}\n\n// Convert base64url to buffer\nconst b64 = pdfData.replace(/-/g, \"+\").replace(/_/g, \"/\");\nconst padded = b64 + \"=\".repeat((4 - b64.length % 4) % 4);\nconst buf = Buffer.from(padded, \"base64\");\n\nnodeFs.mkdirSync(nodePath.dirname(stagingPath), { recursive: true });\nnodeFs.writeFileSync(stagingPath, buf);\n\nreturn [{ json: { stagingPath, metaEncoded } }];"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0035-0035-0035-000000000035",
+      "name": "Has PDF?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        160
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-has-pdf",
+              "leftValue": "={{ $json._noAttachmentFound }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0036-0036-0036-000000000036",
+      "name": "Build Body Record",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2190,
+        380
+      ],
+      "parameters": {
+        "jsCode": "var item = $input.first().json;\nvar meta = {};\ntry { meta = JSON.parse(item.metaJson || '{}'); } catch(e) {}\nvar esc = function(s) { return (s || '').replace(/'/g, \"''\"); };\nreturn [{ json: {\n  source_type: 'GMAIL',\n  source_id: item.messageId,\n  subject: esc(meta.subject || ''),\n  sender_email: esc(meta.sender_email || ''),\n  received_at: meta.received_at || new Date().toISOString(),\n  content_preview: esc((meta.subject || '').substring(0, 500)),\n  raw_json: esc(JSON.stringify({ note: 'No PDF attachment accessible', meta: meta })),\n  batch_id: item.batchId\n} }];"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0037-0037-0037-000000000037",
+      "name": "Insert Body Record",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        2390,
+        380
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO landing.tax_documents (source_type, source_id, subject, sender_email, received_at, file_name, file_ext, file_size_bytes, content_preview, raw_json, batch_id) VALUES ('{{ $json.source_type }}', '{{ $json.source_id }}', '{{ $json.subject }}', '{{ $json.sender_email }}', '{{ $json.received_at }}', null, null, null, '{{ $json.content_preview }}', '{{ $json.raw_json }}', {{ $json.batch_id }}) ON CONFLICT (source_type, source_id, COALESCE(file_name, '')) DO NOTHING;"
+      },
+      "credentials": {
+        "postgres": {
+          "id": "GhZL6n0TTt2R9eJ7",
+          "name": "Tax Collector DB"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Start Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "Start Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start Batch": {
+      "main": [
+        [
+          {
+            "node": "Truncate Landing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Truncate Landing": {
+      "main": [
+        [
+          {
+            "node": "Get Watermark",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Watermark": {
+      "main": [
+        [
+          {
+            "node": "Build Gmail Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Gmail Query": {
+      "main": [
+        [
+          {
+            "node": "Gmail Get All Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail Get All Messages": {
+      "main": [
+        [
+          {
+            "node": "Tag Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag Messages": {
+      "main": [
+        [
+          {
+            "node": "Has Attachment?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Attachment?": {
+      "main": [
+        [
+          {
+            "node": "HTTP Get Full Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract Body Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Get Full Message": {
+      "main": [
+        [
+          {
+            "node": "Find Attachment Meta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Attachment Meta": {
+      "main": [
+        [
+          {
+            "node": "Has PDF?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Get Attachment Data": {
+      "main": [
+        [
+          {
+            "node": "Prepare Command Args",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Command Args": {
+      "main": [
+        [
+          {
+            "node": "Merge Attachment Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write and Process": {
+      "main": [
+        [
+          {
+            "node": "Check Exit Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Exit Code": {
+      "main": [
+        [
+          {
+            "node": "Merge Branches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Body Text": {
+      "main": [
+        [
+          {
+            "node": "Ollama Classify Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Classify Body": {
+      "main": [
+        [
+          {
+            "node": "Parse Ollama Build Landing Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Ollama Build Landing Row": {
+      "main": [
+        [
+          {
+            "node": "Insert Body Landing Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Body Landing Row": {
+      "main": [
+        [
+          {
+            "node": "Merge Branches",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Branches": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Results": {
+      "main": [
+        [
+          {
+            "node": "Complete Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Attachment ID?": {
+      "main": [
+        [
+          {
+            "node": "HTTP Get Attachment Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Inline Args",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Inline Args": {
+      "main": [
+        [
+          {
+            "node": "Merge Attachment Data",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Attachment Data": {
+      "main": [
+        [
+          {
+            "node": "Write PDF with fs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write PDF with fs": {
+      "main": [
+        [
+          {
+            "node": "Write and Process",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has PDF?": {
+      "main": [
+        [
+          {
+            "node": "Has Attachment ID?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Body Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Body Record": {
+      "main": [
+        [
+          {
+            "node": "Insert Body Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Body Record": {
+      "main": [
+        [
+          {
+            "node": "Merge Branches",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    }
+  },
+  "errorWorkflow": "oFeU0bOzAsRxU910"
+}

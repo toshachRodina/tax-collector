@@ -1,0 +1,594 @@
+{
+  "name": "EXTRACT_GMAIL",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst exitCode = item.json.exitCode;\nconst stdout = item.json.stdout || '';\nconst stderr = item.json.stderr || '';\nif (exitCode !== 0) {\n  return [{ json: { success: false, exitCode, stdout, stderr } }];\n}\nreturn [{ json: { success: true, exitCode, stdout, stderr } }];"
+      },
+      "id": "436442dc-80d3-4b8f-ab48-67dc98e275f7",
+      "name": "Check Exit Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5072,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=timeout 570 python3 /data/tax-collector/scripts/process_document.py --file '{{ $json.stagingPath }}' --meta-encoded '{{ $json.metaEncoded }}' --source-type GMAIL"
+      },
+      "id": "f809cb5d-d297-486c-a5c9-0a8103cc738e",
+      "name": "Write and Process",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        4880,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const nodeFs = require('fs');\nconst nodePath = require('path');\nconst pdfData = $json.pdfData;\nconst stagingPath = $json.stagingPath;\n\nif (!pdfData) { return []; }\n\nconst b64 = pdfData.replace(/-/g, '+').replace(/_/g, '/');\nconst padded = b64 + '='.repeat((4 - b64.length % 4) % 4);\nconst buf = Buffer.from(padded, 'base64');\n\nnodeFs.mkdirSync(nodePath.dirname(stagingPath), { recursive: true });\nnodeFs.writeFileSync(stagingPath, buf);\n\nreturn [{ json: {\n  stagingPath: $json.stagingPath,\n  metaEncoded: $json.metaEncoded\n} }];"
+      },
+      "id": "417ee982-91b3-45ac-b33b-e1d15ed35549",
+      "name": "Write PDF with fs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4704,
+        352
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "fa19ef9b-9f0e-40d4-b6a3-826c85470fe1",
+      "name": "Merge Attachment Data",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        4528,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const meta = $input.first().json;\nreturn [{ json: {\n  stagingPath: meta.stagingPath,\n  pdfData: meta.inlineData,\n  metaEncoded: meta.metaEncoded,\n  subject: meta.subject,\n  sender: meta.sender,\n  filename: meta.filename,\n  batchId: meta.batchId,\n  messageId: meta.messageId,\n  receivedAt: meta.receivedAt\n} }];"
+      },
+      "id": "6c3a07c3-7e66-423b-a787-ab9845dc6cf2",
+      "name": "Build Inline Args",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4160,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "stagingPath",
+              "value": "={{ $('Find Attachment Meta').item.json.stagingPath }}",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "pdfData",
+              "value": "={{ $json.data }}",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "metaEncoded",
+              "value": "={{ $('Find Attachment Meta').item.json.metaEncoded }}",
+              "type": "string"
+            },
+            {
+              "id": "a4",
+              "name": "subject",
+              "value": "={{ $('Find Attachment Meta').item.json.subject }}",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "sender",
+              "value": "={{ $('Find Attachment Meta').item.json.sender }}",
+              "type": "string"
+            },
+            {
+              "id": "a6",
+              "name": "filename",
+              "value": "={{ $('Find Attachment Meta').item.json.filename }}",
+              "type": "string"
+            },
+            {
+              "id": "a7",
+              "name": "batchId",
+              "value": "={{ $('Find Attachment Meta').item.json.batchId }}",
+              "type": "number"
+            },
+            {
+              "id": "a8",
+              "name": "messageId",
+              "value": "={{ $('Find Attachment Meta').item.json.messageId }}",
+              "type": "string"
+            },
+            {
+              "id": "a9",
+              "name": "receivedAt",
+              "value": "={{ $('Find Attachment Meta').item.json.receivedAt }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "151ad4ca-db2b-4164-a7f2-4e34000fd192",
+      "name": "Prepare Command Args",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4352,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://www.googleapis.com/gmail/v1/users/me/messages/{{ $json.messageId }}/attachments/{{ $json.attachmentId }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "options": {}
+      },
+      "id": "10429934-73f0-43c1-aac6-4ef58ebdcdca",
+      "name": "HTTP Get Attachment Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4160,
+        176
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "WcOe7o1be8G2TzJ4",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond-attach-id",
+              "leftValue": "={{ $json.attachmentId }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d59390a3-36da-45f0-8da7-671053cde725",
+      "name": "Has Attachment ID?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3984,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nfunction isPdfPart(p) {\n  var mt = (p.mimeType || '').toLowerCase();\n  var fn = (p.filename || '').toLowerCase();\n  return mt.indexOf('pdf') !== -1 || fn.endsWith('.pdf');\n}\n\nfunction findPdfAttachments(parts) {\n  var found = [];\n  if (!parts || !Array.isArray(parts)) return found;\n  for (var i = 0; i < parts.length; i++) {\n    var p = parts[i];\n    var hasContent = p.body && (p.body.attachmentId || (p.body.data && p.body.data.length > 0));\n    if (isPdfPart(p) && hasContent) {\n      found.push({ attachmentId: p.body.attachmentId || null, inlineData: p.body.data || null,\n        filename: p.filename || 'attachment.pdf', mimeType: p.mimeType || 'application/pdf' });\n    }\n    if (p.parts) {\n      var nested = findPdfAttachments(p.parts);\n      for (var j = 0; j < nested.length; j++) found.push(nested[j]);\n    }\n  }\n  return found;\n}\n\nreturn items.map(function(item) {\n  var msg = item.json;\n  var messageId = String(msg.id || '');\n  var parts = (msg.payload && msg.payload.parts) ? msg.payload.parts : [];\n  var attachments = findPdfAttachments(parts);\n\n  if (attachments.length === 0 && msg.payload) {\n    var p = msg.payload;\n    var hasContent = p.body && (p.body.attachmentId || (p.body.data && p.body.data.length > 0));\n    if (isPdfPart(p) && hasContent) {\n      attachments = [{ attachmentId: p.body.attachmentId || null, inlineData: p.body.data || null,\n        filename: p.filename || 'attachment.pdf', mimeType: p.mimeType || 'application/pdf' }];\n    }\n  }\n\n  var headers = (msg.payload && msg.payload.headers) ? msg.payload.headers : [];\n  var subject = '', sender = '';\n  headers.forEach(function(h) {\n    var n = (h.name || '').toLowerCase();\n    if (n === 'subject') subject = h.value || '';\n    if (n === 'from') sender = h.value || '';\n  });\n\n  var batchId = null;\n  try { batchId = $items('Start Batch')[0].json.batch_id; } catch(e) {}\n\n  var first = attachments.length > 0 ? attachments[0] : null;\n  var filename = first ? first.filename : 'attachment.pdf';\n  var safeName = filename.replace(/[\\/:\"*?<>|]/g, '_');\n  var stagingPath = '/data/tax-collector/staging/' + messageId + '_' + safeName;\n  var receivedAt = msg.internalDate ? new Date(parseInt(msg.internalDate)).toISOString() : new Date().toISOString();\n  var metaObj = { source_id: messageId, subject: subject, sender_email: sender,\n    received_at: receivedAt, file_name: filename,\n    file_ext: filename.split('.').pop().toLowerCase(), file_size_bytes: null };\n  var metaEncoded = encodeURIComponent(JSON.stringify(metaObj)).replace(/'/g, '%27');\n\n  if (!first) {\n    return { json: { messageId, stagingPath, metaEncoded, batchId, subject, sender, filename, receivedAt, _noAttachmentFound: true } };\n  }\n  return { json: { messageId, attachmentId: first.attachmentId, inlineData: first.inlineData,\n    filename, safeName, stagingPath, metaEncoded, batchId, subject, sender, receivedAt, _noAttachmentFound: false } };\n});"
+      },
+      "id": "198f2406-7fcc-4368-ba8c-c10774cd046e",
+      "name": "Find Attachment Meta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3808,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://www.googleapis.com/gmail/v1/users/me/messages/{{ $json.id }}?format=full",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "options": {}
+      },
+      "id": "777fbee3-e882-40cf-a78c-4fa77cbf8610",
+      "name": "HTTP Get Full Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3632,
+        352
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "WcOe7o1be8G2TzJ4",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "1aa20c5a-cb3b-43a1-ab37-af924e17bd43",
+      "name": "Loop Over Emails",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        3440,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM landing.tax_documents;",
+        "options": {}
+      },
+      "id": "a0bbb60c-05e4-4782-bee2-a66105146620",
+      "name": "Truncate Landing",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        2768,
+        256
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GhZL6n0TTt2R9eJ7",
+          "name": "Tax Collector DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "returnAll": true,
+        "filters": {
+          "q": "={{ $json.query }}"
+        }
+      },
+      "id": "1cdd43ba-ba2f-442e-9390-47cb2ced65ab",
+      "name": "Gmail Get All Messages",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [
+        3264,
+        256
+      ],
+      "webhookId": "46eadc7a-7e68-4ef9-8177-ee44f037c713",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "WcOe7o1be8G2TzJ4",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst afterDate = new Date(parseInt(items[0].json.watermark_ms, 10));\n\nconst batchId = $items(\"Start Batch\")[0].json.batch_id;\n\nconst fmt = (d) => d.getFullYear() + '/' + String(d.getMonth()+1).padStart(2,'0') + '/' + String(d.getDate()).padStart(2,'0');\n\nconst today = new Date();\nconst query = 'has:attachment filename:pdf after:' + fmt(afterDate) + ' before:' + fmt(today);\n\nreturn [{ json: { query, batchId, afterDate: afterDate.toISOString(), beforeDate: today.toISOString() } }];"
+      },
+      "id": "e2c7705f-21b8-4733-bad7-9e3939772bc8",
+      "name": "Build Gmail Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3088,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(\n    (EXTRACT(EPOCH FROM (MAX(received_at) - INTERVAL '3 days')) * 1000)::bigint,\n    EXTRACT(EPOCH FROM TIMESTAMP '2022-07-01 00:00:00+00')::bigint * 1000\n) AS watermark_ms\nFROM core.tax_documents\nWHERE source_type = 'GMAIL';",
+        "options": {}
+      },
+      "id": "b45fc869-0047-4eba-89fe-ef6c3ca67f45",
+      "name": "Get Watermark",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        2928,
+        256
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GhZL6n0TTt2R9eJ7",
+          "name": "Tax Collector DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO ctl.process_log (workflow_nme, script_nme, status, started_at)\nVALUES ('TC_EXTRACT_GMAIL', 'TC_EXTRACT_GMAIL.json', 'STARTED', NOW())\nRETURNING batch_id;",
+        "options": {}
+      },
+      "id": "9238ab4c-46e0-47df-99af-fb63171f8ed6",
+      "name": "Start Batch",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        2608,
+        256
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GhZL6n0TTt2R9eJ7",
+          "name": "Tax Collector DB"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        2432,
+        160
+      ],
+      "id": "531b85d4-3168-4a89-94eb-4f6b777e99ce",
+      "name": "Manual Execution"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        2432,
+        352
+      ],
+      "id": "553a7d2f-5401-475a-a2b6-b205c16a2794",
+      "name": "When Executed by Another Workflow"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Write and Process": {
+      "main": [
+        [
+          {
+            "node": "Check Exit Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write PDF with fs": {
+      "main": [
+        [
+          {
+            "node": "Write and Process",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Attachment Data": {
+      "main": [
+        [
+          {
+            "node": "Write PDF with fs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Inline Args": {
+      "main": [
+        [
+          {
+            "node": "Merge Attachment Data",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Prepare Command Args": {
+      "main": [
+        [
+          {
+            "node": "Merge Attachment Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Get Attachment Data": {
+      "main": [
+        [
+          {
+            "node": "Prepare Command Args",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Attachment ID?": {
+      "main": [
+        [
+          {
+            "node": "HTTP Get Attachment Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Inline Args",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Attachment Meta": {
+      "main": [
+        [
+          {
+            "node": "Has Attachment ID?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Get Full Message": {
+      "main": [
+        [
+          {
+            "node": "Find Attachment Meta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Exit Code": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Emails": {
+      "main": [
+        [],
+        [
+          {
+            "node": "HTTP Get Full Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Truncate Landing": {
+      "main": [
+        [
+          {
+            "node": "Get Watermark",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail Get All Messages": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Gmail Query": {
+      "main": [
+        [
+          {
+            "node": "Gmail Get All Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Watermark": {
+      "main": [
+        [
+          {
+            "node": "Build Gmail Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start Batch": {
+      "main": [
+        [
+          {
+            "node": "Truncate Landing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Execution": {
+      "main": [
+        [
+          {
+            "node": "Start Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Start Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "6f5ec098-391c-45cd-994c-bdb9c16d026d",
+  "meta": {
+    "instanceId": "2368e69b5c080df17f325116bff5beaa65186ed8d19ea4dc43edb77db5ef060f"
+  },
+  "id": "AkC-XOe-umZxSsEEnaM0-",
+  "tags": [
+    {
+      "updatedAt": "2026-03-25T22:00:22.976Z",
+      "createdAt": "2026-03-25T22:00:22.976Z",
+      "id": "ibOCWUSfke6h3B7y",
+      "name": "tax-collector"
+    }
+  ]
+}

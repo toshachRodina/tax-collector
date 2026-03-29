@@ -1,0 +1,189 @@
+{
+  "name": "RUN_DAILY_TC",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 18,
+              "triggerAtMinute": null
+            }
+          ]
+        }
+      },
+      "id": "37680538-4791-439e-80db-b0d6c791b78b",
+      "name": "Daily Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        2032,
+        -16
+      ],
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        2032,
+        176
+      ],
+      "id": "4a3c15cb-c375-4eae-9286-a6181f989b85",
+      "name": "Manual Trigger",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "fromEmail": "toshach@gmail.com",
+        "toEmail": "toshach@gmail.com",
+        "subject": "=STARTING: {{ $workflow.name }} @ {{ $now.setZone('Australia/Sydney').toFormat('yyyy-MM-dd HH:mm:ss') }}",
+        "html": "=Orchestration {{ $workflow.name }} run sequence initiated @ {{ $now.setZone('Australia/Sydney').toFormat('yyyy-MM-dd HH:mm:ss') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        2208,
+        80
+      ],
+      "id": "0a10098e-83cc-4a2c-9dc4-e7bc7f9b52ca",
+      "name": "SEND INITIATE EMAIL",
+      "webhookId": "180ea105-68c6-4209-8cc4-cdc2b25daa26",
+      "credentials": {
+        "smtp": {
+          "id": "UoJxTCdINYlCTHrd",
+          "name": "GMAIL SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "toshach@gmail.com",
+        "toEmail": "toshach@gmail.com",
+        "subject": "=FINISHED: {{ $workflow.name }} @ {{ $now.setZone('Australia/Sydney').toFormat('yyyy-MM-dd HH:mm:ss') }}",
+        "html": "=Orchestration {{ $workflow.name }} run completed successfully @ {{ $now.setZone('Australia/Sydney').toFormat('yyyy-MM-dd HH:mm:ss') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        2608,
+        80
+      ],
+      "id": "607b77c8-9891-46ce-914b-5a99d9429c9b",
+      "name": "SEND COMPLETION EMAIL",
+      "webhookId": "d41231d6-29ed-4935-b129-61321407ba49",
+      "credentials": {
+        "smtp": {
+          "id": "UoJxTCdINYlCTHrd",
+          "name": "GMAIL SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## PIPELINES (LANDING & CORE)\n* Pipe 1: REGULATORY INSIGHTS : Tracking high-conviction moves from Corporate Insiders (Form 4) and SEC 8-K/13-D filings.\n* Pipe 2: PUBLIC PULSE & HEAT : Monitoring retail search spikes (Google), viral community sentiment (Reddit), and app download velocity.\n* Pipe 3: TACTICAL FLOW & NARRATIVE : Institutional options hedging activity and news sentiment enrichment (VADER/TextBlob).\n* Pipe 4: WISDOM OF CROWDS : Real-time event probabilities from prediction markets (Politics, Econ, Regulatory).",
+        "width": 1056,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2432,
+        -368
+      ],
+      "id": "3dd723b6-550f-421c-ab90-f038e66371f4",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "9H6SDSM3yplwA6B1",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/9H6SDSM3yplwA6B1",
+          "cachedResultName": "GMAIL"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        2400,
+        80
+      ],
+      "id": "b087dc97-4938-49a7-8e5b-2b52d3d0c5bf",
+      "name": "GMAIL",
+      "alwaysOutputData": true
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Daily Schedule": {
+      "main": [
+        [
+          {
+            "node": "SEND INITIATE EMAIL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "SEND INITIATE EMAIL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SEND INITIATE EMAIL": {
+      "main": [
+        [
+          {
+            "node": "GMAIL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GMAIL": {
+      "main": [
+        [
+          {
+            "node": "SEND COMPLETION EMAIL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "d51e791a-1be8-4682-be9d-ace2cb94578d",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "2368e69b5c080df17f325116bff5beaa65186ed8d19ea4dc43edb77db5ef060f"
+  },
+  "id": "KrdjQ1fohP4WySo7",
+  "tags": []
+}

@@ -2,9 +2,9 @@
 
 > Live handoff document. Update before ending any session or switching tools.
 
-**Last updated**: 2026-03-24 (session 5 — architecture locked)
-**Current mode**: Build — ready to start
-**Active branch**: main
+**Last updated**: 2026-03-29 (session 13 — Full pipeline working; granular bill detail capture next)
+**Current mode**: Enhancement — pipeline end-to-end confirmed; extending Ollama prompt for line-item extraction
+**Active branch**: master
 
 ---
 
@@ -14,88 +14,72 @@
 - [x] Project scaffold — CLAUDE.md, specs, skills, slash commands
 - [x] `specs/PROJECT_MASTER_SPEC.md` — two-pillar master spec (Tax Docs + Financial Health)
 - [x] `specs/features/001-database-schema.md` — COMPLETE
-- [x] `specs/features/002-gmail-scanner.md` — NEEDS REWRITE (old architecture — Python-based, superseded by decisions below)
-- [x] `specs/features/003-folder-scanner.md` — Draft, still valid for manual bindump drops
+- [x] `specs/features/002-gmail-scanner.md` — REWRITTEN for n8n-native architecture ✓
+- [x] `specs/features/003-merge-to-core.md` — WRITTEN (session 13)
 - [x] `taxcollectordb` provisioned — 5 schemas, 15 tables, 7 mart views, seed data, smoke tests green
 - [x] `prod/schema/DDL/` — 8 DDL files (000–006 + smoke test)
-- [x] `prod/stored_procedures/sp_merge_tax_documents.sql` — written + deployed to live DB
-- [x] `prod/scripts/extract_gmail_tax_docs.py` — written but SUPERSEDED (see below)
-- [x] `prod/scripts/setup_gmail_auth.py` — written but SUPERSEDED (not needed — n8n handles auth)
-- [x] `landing.tax_documents` dedup index — applied to live DB
-- [x] `~/tax-collector/{scripts,config,logs}` — created on Ubuntu server
+- [x] `prod/workflows/TC_EXTRACT_GMAIL.json` — LIVE, working end-to-end (24 emails processed)
+- [x] `prod/workflows/WIP_LOAD_CORE_TAX_DOCS.json` — built, user imports to n8n
+- [x] `prod/scripts/process_document.py` — deployed to server, working
+- [x] `maintenance/scripts/sp_merge_tax_documents.sql` — deployed to live DB
+- [x] `core.tax_documents` — schema extended with enriched columns + trigger + safe_to_date()
 
-### Architecture — LOCKED (session 5 decisions)
+### Architecture — LOCKED
 
-**Gmail pipeline (n8n-native, single pass):**
+**Gmail pipeline (working):**
 ```
-[n8n: Schedule 6am daily]
-  → [n8n: Gmail search] — uses existing Gmail OAuth credential in n8n
-      for each matching email:
-      ├── HAS PDF ATTACHMENT?
-      │     YES → [n8n: Download attachment binary]
-      │           → [n8n: Save PDF to server] ~/tax-collector/YYYY-YYYY/category/filename.pdf
-      │           → [Execute Command: process_document.py --file <path> --meta <json>]
-      │               (Python: pdfplumber extract text → Ollama classify → DB insert)
-      │
-      └── NO ATTACHMENT
-            → [n8n: Extract email body text]
-            → [n8n HTTP Request: Ollama] classify + extract key fields
-            → [n8n Postgres: Insert landing.tax_documents] (content_preview only)
-  → [n8n Postgres: Update watermark]
-  → [Error branch: Gmail send alert to toshach@gmail.com]
+[n8n: TC_EXTRACT_GMAIL — Schedule or Manual]
+  → Gmail search (has:attachment filename:pdf, 3-month test window)
+  → for each email: download attachment binary → WriteBinaryFile → process_document.py
+      (pdfplumber → Ollama qwen2.5:14b → file to TC_DOCS_ROOT → land to landing.tax_documents)
+  → [SEPARATE] WIP_LOAD_CORE_TAX_DOCS (manual trigger for now)
+      → Start Batch → CALL core.sp_merge_tax_documents(NULL) → Get Counts → Complete Batch
 ```
 
-**Folder pipeline (manual drops only):**
+**Extract/Load separation (HARD RULE):**
+- `TC_EXTRACT_GMAIL` lands to `landing.*` ONLY
+- `WIP_LOAD_CORE_TAX_DOCS` calls `sp_merge_tax_documents` and promotes to `core.*`
+- `process_document.py` does NOT call the SP — that's the LOAD_CORE workflow's job
+
+**Filing path structure:**
 ```
-[n8n: Watch ~/tax-collector/bindump/ for new files]
-  → [Execute Command: process_document.py --file <path>]
-      (same Python helper as Gmail pipeline)
-  → [Move file to YYYY-YYYY/category/]
+/mnt/disk2/data/tax-collector/ = X:\data\tax-collector\ on Windows = /data/tc-docs/ in container
+  bindump/                    ← manual drop zone only
+  YYYY-YYYY/
+    income/payslips/ | interest/ | dividends/
+    deductions/work-related/ | insurance/
+    super/ | health/ | government/ | investments/
+    receipts-and-bills/utilities/ | other/
 ```
 
-**Shared Python helper: `process_document.py`**
-- Input: file path + optional email metadata JSON
-- Steps: extract text (pdfplumber) → call Ollama (qwen2.5:14b) → classify → file document → land to DB → call sp_merge
-- Used by both Gmail and folder pipelines
+**File naming**: `{Supplier Name} - {original_filename}.pdf` (supplier prefix added by build_dest_path)
 
-**What bindump is for (revised):**
-- ONLY manually-dropped files (paper receipts scanned, manually downloaded statements)
-- Gmail attachments go DIRECTLY to `YYYY-YYYY/category/` after classification — NOT via bindump
-
-**Filing path structure (confirmed):**
-```
-/mnt/disk2/data/tax-collector/      ← = X:\data\tax-collector\ on Windows
-  bindump/                          ← manual drop zone only
-  YYYY-YYYY/                        ← e.g. 2024-2025 (create if missing)
-    income/
-      payslips/
-      interest/
-      dividends/
-    deductions/
-      insurance/
-      work-related/
-    super/
-    health/
-    government/               ← ATO notices, HECS
-    investments/
-    receipts-and-bills/
-      utilities/
-      other/
-```
+### What's confirmed working (session 13)
+- 24 emails processed end-to-end: extract → land → merge → core
+- `core.tax_documents` has 24 rows with correct data (supplier names, billing dates, amounts, confidence)
+- Sample: GloBird Energy (confidence 1.0, AUTO_CONFIRMED, billing_start/end populated, $219.49)
+- review_status: confidence >= 0.75 → AUTO_CONFIRMED, else NEEDS_REVIEW
+- ON CONFLICT preserves user-reviewed records (CONFIRMED/REJECTED)
+- Filed files at correct network-visible path: X:\data\tax-collector\2025-2026\...
 
 ### What's next (priority order)
-1. **Rewrite spec 002** — Gmail scanner (n8n workflow, single-pass, branch on attachment)
-2. **Write `prod/scripts/process_document.py`** — shared PDF processor (pdfplumber + Ollama + filing + DB)
-3. **Build n8n workflow `WIP_TC_EXTRACT_GMAIL`** — export JSON to `prod/workflows/`
-4. **Update spec 003** — folder scanner now only handles bindump manual drops
-5. **Build n8n workflow `WIP_TC_SCAN_BINDUMP`**
-6. **Write spec 004** — NAB/Bendigo statement ingestor
+1. **[NEXT] Granular bill detail capture** — extend Ollama prompt to extract line_items from utility bills
+   - line_items: array of {description, period, quantity, unit, rate, amount}
+   - Store in raw_json (already JSONB in landing) → flows to core via SP
+   - Create `mart.vw_utility_bills` view exposing line_items for solar battery ROI analysis
+   - Deploy: update process_document.py → deploy bat → re-run extract on utility bills
+2. **Re-run full test** — truncate landing + core (user runs in DBeaver), re-run TC_EXTRACT_GMAIL + WIP_LOAD_CORE_TAX_DOCS
+3. **3-year historical backfill** — change Gmail query `after:` date to 2022/07/01 (currently 3-month test window)
+4. **mart.vw_utility_bills** — spec 003 section 11 view for solar/utility analysis
+5. **DBeaver review workflow** — spec 003 section 9: queries for CONFIRMED/REJECTED tagging
+6. **Watermark revert** — currently 3-month test window; revert to full FY/watermark incremental after backfill
+7. **Remove test_classify.py** — already deleted from server; delete from maintenance/scripts/ locally
 
-### Open items
-- Bendigo Bank CSV columns — confirm when next statement available (low urgency)
-- Share broker — confirm broker name and CSV format (CommSec assumed)
-- Super fund provider — TBD (placeholder in DB)
-- Ollama prompt design for document classification — needs iteration/testing
+### Open items (lower priority)
+- Bendigo Bank CSV columns — confirm when next statement available
+- Share broker — CommSec CSV format TBD
+- Super fund provider — TBD
+- Review UI (Phase 2) — Telegram bot or simple web page for mobile approval
 
 ---
 
@@ -108,49 +92,90 @@
 - **DB access**: AI uses `docker exec postgres psql` over SSH (key `~/.ssh/trade_vantage_agent`). User uses DBeaver on Windows dev machine.
 - **HARD RULE**: Never autonomously run DROP / TRUNCATE / bulk DELETE. Provide SQL, user runs in DBeaver.
 - **Privacy rule**: Never send document content to cloud LLMs — Ollama on Mac Mini (`192.168.0.93:11434`) only
-- **LLM model**: `qwen2.5:14b` Q4_K_M on Mac Mini M4 Pro (`192.168.0.93:11434`). n8n calls via HTTP Request POST.
+- **LLM model**: `qwen2.5:14b` Q4_K_M on Mac Mini M4 Pro (`192.168.0.93:11434`). Available models: qwen2.5:14b, qwen2.5-coder:14b, qwen2.5-coder:32b-instruct-q3_k_m, llama3.1:latest. **qwen2.5:32b does NOT exist** — do not use.
 - **Alerting**: Email to `toshach@gmail.com` via Gmail OAuth2 cred ID `WcOe7o1be8G2TzJ4`. No Telegram/Signal.
-- **Gmail OAuth**: App "In production", tokens long-lived. Credential managed entirely in n8n. Always reconnect via `n8n.rodinah.dev` (not local IP).
-- **Script deploy path**: `X:\automation-io\tax-collector\scripts\` → `/mnt/disk2/automation-io/tax-collector/scripts/` → n8n sees as `/data/tax-collector/scripts/`. Use `maintenance\scripts\deploy-scripts.bat` to push from repo.
-- **sp_merge_tax_documents**: Deployed. Groups by (source_type, source_id), promotes largest PDF per email to core.
-- **Folder paths (server)**: `/mnt/disk2/data/tax-collector/` is the root (= `X:\data\tax-collector\` on Windows, = `sdd` WD 3TB ext4 drive). Subdirs confirmed: `bindump/` (manual drops only) + pre-created year folders `2026-2027` through `2030-2031`. Script must CREATE missing year folders (e.g. `2024-2025` for current FY). `~/tax-collector/{scripts,config,logs}` on home dir is for scripts/config only — NOT document storage.
-- **NAB CSV** (verified): Date (`%d %b %y`), Amount, Account Number, Transaction Type, Transaction Details, Balance, Category, Merchant Name, Processed On
-- **Statement ingestion**: user drops CSVs into watched folder — no bank API. Dedup via `dedup_hash`.
-- **Financial health priority**: (1) spend categories → (2) budget vs actual → (3) anomalies → (4) savings rate → (5) tax cash flow
+- **Gmail OAuth**: App "In production", tokens long-lived. Always reconnect via `n8n.rodinah.dev` (not local IP).
+- **Script deploy path**: `X:\automation-io\tax-collector\scripts\` → `/mnt/disk2/automation-io/tax-collector/scripts/` → n8n sees as `/data/tax-collector/scripts/`. Use `bash maintenance/scripts/deploy-scripts.bat` (Windows) to push.
+- **n8n Tax Collector DB credential**: ID `GhZL6n0TTt2R9eJ7`, connects to `taxcollectordb` as `taxcollectorusr`
+- **Workflow push**: `bash maintenance/scripts/push-workflow.sh prod/workflows/<file>.json` — requires `"_n8nId"` field. First-time creation: omit `_n8nId`.
+- **Workflow orchestration**: Child workflows have Manual Trigger + Execute Workflow Trigger. Parent orchestrator handles scheduling. AI builds children only.
+- **sp_merge_tax_documents**: Called with NULL (not a batch_id) — processes ALL unprocessed landing rows. Has safe_to_date() for invalid LLM dates. Classification model hardcoded as 'qwen2.5:14b'.
+- **TC_DOCS_ROOT**: `/data/tc-docs` in container = `/mnt/disk2/data/tax-collector/` on host = `X:\data\tax-collector\` on Windows
+- **review_status values**: AUTO_CONFIRMED (confidence >= 0.75), NEEDS_REVIEW (< 0.75), AUTO_REJECTED (not used yet), CONFIRMED, REJECTED (user-set via DBeaver)
+- **process_document.py**: Lands everything regardless of is_tax_relevant — the SP's review_status is the quality gate
+- **Execute Command expressions**: `=plain string {{ expr }}` format. Never pass binary as shell args (E2BIG). Container shell is `/bin/sh` (busybox — no bash).
+- **n8n JsTaskRunner**: `$json` is Proxy — use `$input.all()` with `runOnceForAllItems`. `require('fs')` blocked.
+- **WriteBinaryFile**: Requires `N8N_RESTRICT_FILE_ACCESS_TO=/data/tax-collector` in docker-compose.
+- **Destructive ops rule (extended)**: Applies to n8n workflow API deletions too — always confirm with user.
 - **Skills to load**: `skill_tax_collector_core` + `skill_shared_infrastructure`
-- **Superseded files** (do not use): `prod/scripts/extract_gmail_tax_docs.py`, `prod/scripts/setup_gmail_auth.py` — Python-based Gmail OAuth approach, replaced by n8n-native
+- **Superseded files**: `prod/scripts/extract_gmail_tax_docs.py`, `prod/scripts/setup_gmail_auth.py` — do not use
 
 ---
 
 ## Session Log
 
-### 2026-03-24 (session 5)
-- Architecture decisions locked (see Architecture section above)
-- Decision 1: Gmail reading via n8n (existing credential) — no Python OAuth needed
-- Decision 2: Download attachments directly to YYYY-YYYY/category/ — user needs copies for tax agent
-- Decision 3: Handle body-only emails in Phase 1 (same pass, branch in workflow)
-- Key insight: bindump is now ONLY for manual drops; Gmail → direct filing
-- Key insight: one shared `process_document.py` Python helper serves both Gmail and folder pipelines
-- Superseded: `extract_gmail_tax_docs.py`, `setup_gmail_auth.py` — flagged in repo as superseded
-- No user actions required to start next session — AI can begin spec rewrite + build immediately
-- CONTEXT.md fully updated — incoming AI can start with spec 002 rewrite
+### 2026-03-29 (session 13) — Full pipeline working; line-item extraction next
 
-### 2026-03-24 (session 4)
-- Gmail OAuth reconnected and working — root cause: Cloudflare intercepting callback + session cookie domain mismatch (always reconnect via n8n.rodinah.dev, not local IP)
-- Confirmed Gmail app "In production" — tokens long-lived
-- Model: `qwen2.5:14b` Q4_K_M chosen for classification
-- Alerting: Gmail email only (Law 2 already wired)
-- Skill_shared_infrastructure updated with verified model list
+**What was done (sessions 12b–13):**
+- Fixed Ollama model: reverted from qwen2.5:32b (doesn't exist) back to qwen2.5:14b
+- Updated prompt: explicit TRUE/FALSE rules for Australian tax relevance
+- Fixed NUL byte error: `raw_json.replace('\x00', '')` + `_clean()` helper for string fields
+- Removed `is_tax_relevant` gate from `process_document.py` — land everything, review_status is the gate
+- Removed `call_sp_merge()` from `main()` — LOAD_CORE workflow handles merges
+- Added supplier name file prefix: `GloBird Energy - Invoice10058516.pdf`
+- Fixed file paths: TC_DOCS_ROOT=/data/tc-docs → correct network-visible path
+- Extended `core.tax_documents` schema: supplier_name, account_ref, supply_address, document_date, billing_start, billing_end, total_amount, gst_amount, filed_path, reviewed_at + trigger
+- Updated `sp_merge_tax_documents.sql`: new columns, safe_to_date(), review_status logic, NULL batch_id support
+- Built `WIP_LOAD_CORE_TAX_DOCS.json`: full workflow with error path, SP called with NULL
+- Wrote `specs/features/003-merge-to-core.md`
+- Confirmed: 24 emails → 24 core rows, correct supplier names, dates, amounts, review_status
 
-### 2026-03-24 (session 3)
-- Resolved all 3 blocking open items (OAuth, folder paths, NAB CSV columns)
-- Written specs 002 and 003 (both need revision per session 5 architecture decisions)
-- Bendigo Bank CSV TBD
+**Key decisions:**
+- SP always called with NULL (not batch_id) — landing rows have EXTRACT batch_ids, not LOAD_CORE batch_ids
+- Everything lands (no LLM gate at extract time) — human reviews in core via DBeaver
+- review_status CHECK includes: AUTO_CONFIRMED, AUTO_REJECTED, NEEDS_REVIEW, CONFIRMED, REJECTED
 
-### 2026-03-24 (session 2)
-- HARD RULE for destructive DB ops codified
-- AI autonomy clarified: AI executes all dev/deploy, user should not run scripts
+**Next session starts with:** Extending Ollama prompt to capture line_items from utility bills (description, period, qty, unit, rate, amount) for solar battery ROI analysis. Then mart.vw_utility_bills view.
 
-### 2026-03-23 (session 1)
-- Project scaffold, master spec, schema spec (001), DB provisioned, smoke tests green
-- postgres superuser = `n8nusr`
+---
+
+### 2026-03-28 (sessions 11–12) — TC_EXTRACT_GMAIL working end-to-end
+
+- Write and Process node fixed: WriteBinaryFile pipeline avoids E2BIG, `=str {{ expr }}` format confirmed
+- N8N_RESTRICT_FILE_ACCESS_TO=/data/tax-collector added to docker-compose
+- 24 emails processed successfully
+- Watermark changed from landing to core table (landing is cleared each run)
+
+---
+
+### 2026-03-27 (sessions 9–10) — Attachment download rewritten
+
+- Gmail downloadAttachments broken in v2.6.4 — replaced with HTTP Request chain
+- Tag Messages fixed: runOnceForAllItems + $input.all()
+- Code node runOnceForEachItem fails for large items (IPC null for >300KB)
+- Merge node diamond pattern broken in n8n 2.6.4
+
+---
+
+### 2026-03-26 (sessions 7–8) — Infrastructure, credentials, workflow architecture
+
+- Tax Collector DB credential created (ID: GhZL6n0TTt2R9eJ7)
+- TC_DB_PASSWORD + TC_DOCS_ROOT added to docker-compose
+- pdfplumber added to n8n-build Dockerfile
+- Extract/Load isolation decision locked
+- Watermark redesigned (self-healing COALESCE)
+
+---
+
+### 2026-03-25 (session 6) — Core scripts and workflow written
+
+- process_document.py written (pdfplumber → Ollama → file → land)
+- TC_EXTRACT_GMAIL.json built (23 nodes)
+
+---
+
+### 2026-03-24 (sessions 1–5) — Project scaffold and DB
+
+- taxcollectordb provisioned, 5 schemas, smoke tests green
+- Architecture decisions locked (n8n-native Gmail, shared process_document.py)
+- NAB CSV format verified
