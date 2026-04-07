@@ -1,0 +1,137 @@
+{
+  "name": "HANDLE_CHECKLIST_RESPONSE",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "checklist-response",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "d4e5f6a7-0004-0004-0004-000000000001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 390],
+      "webhookId": "checklist-response"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst secret = $env.REVIEW_HMAC_SECRET || 'fallback-secret';\n\nconst params = $input.first().json.query || {};\nconst groupCode = params.group;\nconst fy        = params.fy;\nconst resp      = params.resp;\nconst token     = params.token;\n\nif (!groupCode || !fy || !resp || !token) {\n  return [{ json: { valid: false, error: 'Missing required parameters' } }];\n}\n\nif (resp !== 'YES' && resp !== 'NO') {\n  return [{ json: { valid: false, error: 'Invalid response value' } }];\n}\n\nconst expected = crypto.createHmac('sha256', secret)\n  .update(`${groupCode}|${fy}|${resp}`)\n  .digest('hex');\n\nconst valid = expected === token;\nreturn [{ json: { valid, groupCode, fy_year: parseInt(fy), resp, token } }];"
+      },
+      "id": "d4e5f6a7-0004-0004-0004-000000000002",
+      "name": "Validate Token",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 390]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            {
+              "id": "cond-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d4e5f6a7-0004-0004-0004-000000000003",
+      "name": "Token Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 390]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE ref.tax_checklist_responses r\nSET\n    is_applicable = '{{ $json.resp }}',\n    responded_at  = NOW(),\n    source        = 'EMAIL'\nFROM ref.tax_checklist_items i\nWHERE r.item_id    = i.item_id\n  AND i.applicability_group = '{{ $json.groupCode }}'\n  AND r.fy_year    = {{ $json.fy_year }}\n  AND i.item_type  = 'DOCUMENT'\nRETURNING\n    r.item_id,\n    i.applicability_question,\n    i.applicability_group,\n    r.is_applicable;",
+        "options": {}
+      },
+      "id": "d4e5f6a7-0004-0004-0004-000000000004",
+      "name": "Update Response",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [900, 280],
+      "credentials": {
+        "postgres": {
+          "id": "GhZL6n0TTt2R9eJ7",
+          "name": "Tax Collector DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Collect results from the UPDATE RETURNING\nconst rows = $input.all().filter(r => r.json && r.json.item_id != null);\nconst count = rows.length;\n\nif (count === 0) {\n  // No rows updated — group not found or FY mismatch\n  const html = `<!DOCTYPE html>\n<html>\n<head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"></head>\n<body style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:0;padding:40px 20px;background:#f9fafb;text-align:center\">\n  <div style=\"max-width:420px;margin:0 auto;background:#fff;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.1);padding:40px 32px\">\n    <h2 style=\"color:#dc2626\">Nothing updated</h2>\n    <p style=\"color:#555\">This checklist group was not found for the given FY. The link may be outdated.</p>\n  </div>\n</body>\n</html>`;\n  return [{ json: { html } }];\n}\n\nconst first        = rows[0].json;\nconst question     = first.applicability_question;\nconst resp         = first.is_applicable;\nconst isYes        = resp === 'YES';\nconst colour       = isYes ? '#16a34a' : '#dc2626';\nconst icon         = isYes ? '&#10003;' : '&#10007;';\nconst verb         = isYes ? 'YES — applicable' : 'NO — not applicable';\nconst itemsUpdated = count === 1 ? '1 checklist item' : `${count} checklist items`;\n\nconst html = `<!DOCTYPE html>\n<html>\n<head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"></head>\n<body style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:0;padding:40px 20px;background:#f9fafb;text-align:center\">\n<div style=\"max-width:440px;margin:0 auto;background:#fff;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.1);padding:40px 32px\">\n  <div style=\"width:64px;height:64px;border-radius:50%;background:${colour};margin:0 auto 20px;display:flex;align-items:center;justify-content:center\">\n    <span style=\"color:#fff;font-size:32px;line-height:1\">${icon}</span>\n  </div>\n  <h2 style=\"margin:0 0 8px;color:#111\">Response recorded</h2>\n  <p style=\"color:#555;margin:0 0 8px;font-size:15px\">${question}</p>\n  <p style=\"color:${colour};font-weight:700;font-size:16px;margin:0 0 20px\">${verb}</p>\n  <p style=\"color:#94a3b8;font-size:12px;margin:0 0 24px\">${itemsUpdated} updated</p>\n  <a href=\"https://n8n.rodinah.dev\" style=\"background:#1e40af;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-size:14px;font-weight:600\">\n    &#8592; Back to Checklist\n  </a>\n</div>\n</body>\n</html>`;\n\nreturn [{ json: { html } }];"
+      },
+      "id": "d4e5f6a7-0004-0004-0004-000000000005",
+      "name": "Build Success Page",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 280]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [{ "name": "Content-Type", "value": "text/html; charset=utf-8" }]
+          }
+        }
+      },
+      "id": "d4e5f6a7-0004-0004-0004-000000000006",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1340, 280]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<!DOCTYPE html><html><body style=\"font-family:sans-serif;text-align:center;padding:60px\"><h2 style=\"color:#ef4444\">&#128683; Invalid Request</h2><p>This link is invalid or has expired.</p></body></html>",
+        "options": {
+          "responseCode": 403,
+          "responseHeaders": {
+            "entries": [{ "name": "Content-Type", "value": "text/html; charset=utf-8" }]
+          }
+        }
+      },
+      "id": "d4e5f6a7-0004-0004-0004-000000000007",
+      "name": "Respond 403",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 520]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Validate Token", "type": "main", "index": 0 }]]
+    },
+    "Validate Token": {
+      "main": [[{ "node": "Token Valid?", "type": "main", "index": 0 }]]
+    },
+    "Token Valid?": {
+      "main": [
+        [{ "node": "Update Response", "type": "main", "index": 0 }],
+        [{ "node": "Respond 403",     "type": "main", "index": 0 }]
+      ]
+    },
+    "Update Response": {
+      "main": [[{ "node": "Build Success Page", "type": "main", "index": 0 }]]
+    },
+    "Build Success Page": {
+      "main": [[{ "node": "Respond Success", "type": "main", "index": 0 }]]
+    }
+  },
+  "_n8nId": "XcXfcWYIUlIFKlKp",
+  "active": true,
+  "settings": { "executionOrder": "v1" },
+  "meta": { "instanceId": "2368e69b5c080df17f325116bff5beaa65186ed8d19ea4dc43edb77db5ef060f" },
+  "tags": [{ "name": "tax-collector" }]
+}

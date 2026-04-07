@@ -39,7 +39,9 @@ DB_CONFIG = {
 
 OLLAMA_URL = "http://192.168.0.93:11434/api/generate"
 OLLAMA_MODEL = "qwen2.5:14b"
-OLLAMA_TIMEOUT = 120
+OLLAMA_TIMEOUT = 180
+OLLAMA_CTX = 32768          # 32K context window — fits ~24K chars of document text
+OLLAMA_MAX_TEXT_CHARS = 24000  # ~6K tokens of document text at conservative 4 chars/token
 
 TC_DOCS_ROOT = os.environ.get("TC_DOCS_ROOT", "/data/tax-collector/docs")
 
@@ -71,7 +73,7 @@ DEFAULT_CATEGORY = "Invoice / Receipt — Other"
 OLLAMA_PROMPT = """\
 You are an Australian tax document classifier. Analyse the following document text and return a JSON object.
 
-Document text:
+{few_shot_block}Document text:
 {text}
 
 Return ONLY a JSON object with these exact fields:
@@ -224,7 +226,7 @@ def extract_text(file_path):
         return ""
 
 
-def classify_with_ollama(text):
+def classify_with_ollama(text, few_shot_examples=None):
     if not text:
         log.info("No text extracted — using default category with low confidence")
         return {
@@ -238,14 +240,17 @@ def classify_with_ollama(text):
             "summary": "No text could be extracted from this document.",
         }
 
-    truncated = text[:6000]
-    prompt = OLLAMA_PROMPT.format(text=truncated)
+    truncated = text[:OLLAMA_MAX_TEXT_CHARS]
+    few_shot_block = format_few_shot_block(few_shot_examples or [])
+    prompt = OLLAMA_PROMPT.format(text=truncated, few_shot_block=few_shot_block)
+    log.info("Prompt includes %d few-shot examples", len(few_shot_examples or []))
 
     payload = {
         "model": OLLAMA_MODEL,
         "prompt": prompt,
         "stream": False,
         "format": "json",
+        "options": {"num_ctx": OLLAMA_CTX},
     }
 
     try:
@@ -273,6 +278,83 @@ def classify_with_ollama(text):
     }
 
 
+def get_few_shot_examples(conn):
+    """Fetch recent human-reviewed records as few-shot examples.
+
+    Returns up to 8 CONFIRMED + 8 REJECTED, prioritising records that have
+    reviewer_notes (richer signal for the LLM).
+    """
+    sql = """
+        (SELECT d.subject, d.supplier_name, c.category_nme AS category,
+                d.review_status, d.reviewer_notes
+         FROM core.tax_documents d
+         LEFT JOIN ref.tax_categories c ON c.category_id = d.tax_category_id
+         WHERE d.review_status = 'CONFIRMED' AND d.subject IS NOT NULL
+         ORDER BY (d.reviewer_notes IS NOT NULL) DESC, d.reviewed_at DESC NULLS LAST
+         LIMIT 8)
+        UNION ALL
+        (SELECT d.subject, d.supplier_name, c.category_nme AS category,
+                d.review_status, d.reviewer_notes
+         FROM core.tax_documents d
+         LEFT JOIN ref.tax_categories c ON c.category_id = d.tax_category_id
+         WHERE d.review_status = 'REJECTED' AND d.subject IS NOT NULL
+         ORDER BY (d.reviewer_notes IS NOT NULL) DESC, d.reviewed_at DESC NULLS LAST
+         LIMIT 8)
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql)
+            rows = cur.fetchall()
+        return [
+            {"subject": r[0], "supplier_name": r[1], "category": r[2],
+             "status": r[3], "notes": r[4]}
+            for r in rows
+        ]
+    except Exception as exc:
+        log.warning("Could not fetch few-shot examples: %s — proceeding without", exc)
+        return []
+
+
+def format_few_shot_block(examples):
+    """Format a list of few-shot examples into a prompt block.
+
+    Returns an empty string when there are no examples so the prompt
+    degrades gracefully on first run.
+    """
+    if not examples:
+        return ""
+
+    confirmed = [e for e in examples if e["status"] == "CONFIRMED"]
+    rejected  = [e for e in examples if e["status"] == "REJECTED"]
+
+    lines = [
+        "Past decisions by a human reviewer — use these to calibrate your classification:",
+        "",
+    ]
+    if confirmed:
+        lines.append("CONFIRMED (is_tax_relevant=true):")
+        for e in confirmed:
+            parts = []
+            if e["supplier_name"]: parts.append(f"Supplier: {e['supplier_name']}")
+            if e["subject"]:       parts.append(f"Subject: {e['subject']}")
+            if e["category"]:      parts.append(f"Category: {e['category']}")
+            if e["notes"]:         parts.append(f"Note: {e['notes']}")
+            lines.append("  - " + " | ".join(parts))
+        lines.append("")
+
+    if rejected:
+        lines.append("REJECTED (is_tax_relevant=false):")
+        for e in rejected:
+            parts = []
+            if e["supplier_name"]: parts.append(f"Supplier: {e['supplier_name']}")
+            if e["subject"]:       parts.append(f"Subject: {e['subject']}")
+            if e["notes"]:         parts.append(f"Note: {e['notes']}")
+            lines.append("  - " + " | ".join(parts))
+        lines.append("")
+
+    return "\n".join(lines) + "\n"
+
+
 def determine_fy_year(classification):
     today = datetime.now(timezone.utc)
     raw = classification.get("fy_year")
@@ -295,7 +377,7 @@ def build_dest_path(file_path, fy_year, category, supplier_name=None):
     original = Path(file_path).name
     if supplier_name:
         # Sanitise supplier name: strip chars that are problematic in filenames
-        safe_supplier = re.sub(r'[\\/:*?"<>|]', '', supplier_name).strip()
+        safe_supplier = re.sub(r"[\\/:*?\"<>|'\u2018\u2019\u201c\u201d]", '', supplier_name).strip()
         if safe_supplier:
             original = f"{safe_supplier} - {original}"
 
@@ -467,8 +549,13 @@ def main():
         # Step 4: content preview
         content_preview = text[:500]
 
-        # Step 5: Classify
-        classification = classify_with_ollama(text)
+        # Step 5: Classify — inject few-shot examples from human-reviewed records
+        few_shot_examples = get_few_shot_examples(conn)
+        log.info("Loaded %d few-shot examples (%d confirmed, %d rejected)",
+                 len(few_shot_examples),
+                 sum(1 for e in few_shot_examples if e["status"] == "CONFIRMED"),
+                 sum(1 for e in few_shot_examples if e["status"] == "REJECTED"))
+        classification = classify_with_ollama(text, few_shot_examples=few_shot_examples)
         category = classification.get("category", DEFAULT_CATEGORY)
         if category not in CATEGORY_DIR_MAP:
             log.warning("Unknown category '%s' — falling back to default", category)

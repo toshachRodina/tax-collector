@@ -7,7 +7,7 @@
           "interval": [
             {
               "triggerAtHour": 18,
-              "triggerAtMinute": null
+              "triggerAtMinute": {}
             }
           ]
         }
@@ -69,7 +69,7 @@
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2.1,
       "position": [
-        2608,
+        2816,
         80
       ],
       "id": "607b77c8-9891-46ce-914b-5a99d9429c9b",
@@ -125,6 +125,31 @@
       "id": "b087dc97-4938-49a7-8e5b-2b52d3d0c5bf",
       "name": "GMAIL",
       "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "J2Cj-JxegaMh8tpYPjzyJ",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/J2Cj-JxegaMh8tpYPjzyJ",
+          "cachedResultName": "NOTIFY_REVIEW"
+        },
+        "workflowInputs": {
+          "mappingMode": "passthrough",
+          "value": {}
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        2608,
+        80
+      ],
+      "id": "33256cfe-6335-40f9-b870-99afbb2abae8",
+      "name": "NOTIFY REVIEW",
+      "alwaysOutputData": true
     }
   ],
   "pinData": {},
@@ -166,6 +191,17 @@
       "main": [
         [
           {
+            "node": "NOTIFY REVIEW",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "NOTIFY REVIEW": {
+      "main": [
+        [
+          {
             "node": "SEND COMPLETION EMAIL",
             "type": "main",
             "index": 0
@@ -174,12 +210,12 @@
       ]
     }
   },
-  "active": true,
+  "active": false,
   "settings": {
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "d51e791a-1be8-4682-be9d-ace2cb94578d",
+  "versionId": "61fc4d51-ec44-4a18-a422-b0edeb138790",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "2368e69b5c080df17f325116bff5beaa65186ed8d19ea4dc43edb77db5ef060f"

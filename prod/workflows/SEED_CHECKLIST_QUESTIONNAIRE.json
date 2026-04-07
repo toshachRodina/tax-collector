@@ -1,0 +1,102 @@
+{
+  "name": "SEED_CHECKLIST_QUESTIONNAIRE",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "c3d4e5f6-0003-0003-0003-000000000001",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 390]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "fy-year",
+              "name": "fy_year",
+              "value": 2025,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c3d4e5f6-0003-0003-0003-000000000002",
+      "name": "Set FY Year",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [460, 390]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n    i.applicability_group AS group_code,\n    i.applicability_question,\n    i.section,\n    MIN(i.sort_order) AS sort_order,\n    MAX(r.is_applicable) AS current_response\nFROM ref.tax_checklist_items i\nJOIN ref.tax_checklist_responses r\n    ON r.item_id = i.item_id AND r.fy_year = {{ $json.fy_year }}\nWHERE i.item_type = 'DOCUMENT'\n  AND i.always_required = false\n  AND i.applicability_group IS NOT NULL\n  AND i.active = true\nGROUP BY i.applicability_group, i.applicability_question, i.section\nORDER BY MIN(i.sort_order);",
+        "options": {}
+      },
+      "id": "c3d4e5f6-0003-0003-0003-000000000003",
+      "name": "Get Questionnaire Items",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [680, 390],
+      "credentials": {
+        "postgres": {
+          "id": "GhZL6n0TTt2R9eJ7",
+          "name": "Tax Collector DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst secret = $env.REVIEW_HMAC_SECRET || 'fallback-secret';\nconst baseUrl = 'https://n8n.rodinah.dev/webhook/checklist-response';\nconst metabaseUrl = 'http://hal-srvr:3002/dashboard/6';\n\n// Grab FY from the first item (all items share the same FY from the query)\nconst items = $input.all().filter(r => r.json && r.json.group_code != null);\nconst fy_year = 2025;\n\nfunction makeToken(groupCode, fy, resp) {\n  return crypto.createHmac('sha256', secret)\n    .update(`${groupCode}|${fy}|${resp}`)\n    .digest('hex');\n}\n\nfunction makeLink(groupCode, fy, resp) {\n  const token = makeToken(groupCode, fy, resp);\n  const enc = encodeURIComponent(groupCode);\n  return `${baseUrl}?group=${enc}&fy=${fy}&resp=${resp}&token=${token}`;\n}\n\nfunction responseIndicator(current, resp) {\n  if (current === resp) return ' <strong style=\"font-size:11px;color:#64748b\">(current)</strong>';\n  return '';\n}\n\nfunction yesStyle(current) {\n  const active = current === 'YES';\n  return active\n    ? 'background:#16a34a;color:#fff;padding:7px 14px;border-radius:4px;text-decoration:none;font-size:13px;font-weight:700;display:inline-block'\n    : 'background:#f0fdf4;color:#16a34a;border:1px solid #86efac;padding:6px 13px;border-radius:4px;text-decoration:none;font-size:13px;display:inline-block';\n}\n\nfunction noStyle(current) {\n  const active = current === 'NO';\n  return active\n    ? 'background:#dc2626;color:#fff;padding:7px 14px;border-radius:4px;text-decoration:none;font-size:13px;font-weight:700;display:inline-block'\n    : 'background:#fef2f2;color:#dc2626;border:1px solid #fca5a5;padding:6px 13px;border-radius:4px;text-decoration:none;font-size:13px;display:inline-block';\n}\n\n// Group items by section\nconst sections = {};\nfor (const item of items) {\n  const d = item.json;\n  if (!sections[d.section]) sections[d.section] = [];\n  sections[d.section].push(d);\n}\n\nconst sectionOrder = ['Income', 'Deductions', 'Property', 'Super', 'Health', 'Government'];\n\nlet sectionHtml = '';\nfor (const section of sectionOrder) {\n  const rows = sections[section];\n  if (!rows || rows.length === 0) continue;\n\n  const rowHtml = rows.map(d => {\n    const yesLink = makeLink(d.group_code, fy_year, 'YES');\n    const noLink  = makeLink(d.group_code, fy_year, 'NO');\n    const current = d.current_response || 'UNKNOWN';\n    const unknownBadge = current === 'UNKNOWN'\n      ? '<span style=\"font-size:10px;background:#fef9c3;color:#854d0e;padding:2px 6px;border-radius:3px;margin-left:6px\">NOT ANSWERED</span>'\n      : '';\n    return `\n    <tr style=\"border-bottom:1px solid #f1f5f9\">\n      <td style=\"padding:12px 16px;font-size:14px;color:#1e293b;line-height:1.4\">\n        ${d.applicability_question}${unknownBadge}\n      </td>\n      <td style=\"padding:12px 16px;white-space:nowrap\">\n        <a href=\"${yesLink}\" style=\"${yesStyle(current)}\">&#10003;&nbsp;YES</a>\n        &nbsp;\n        <a href=\"${noLink}\" style=\"${noStyle(current)}\">&#10007;&nbsp;NO</a>\n      </td>\n    </tr>`;\n  }).join('');\n\n  sectionHtml += `\n  <h3 style=\"margin:28px 0 8px;color:#0f172a;font-size:15px;text-transform:uppercase;letter-spacing:.05em;padding:0 24px\">${section}</h3>\n  <table style=\"width:100%;border-collapse:collapse;border-top:2px solid #e2e8f0\">\n    <tbody>${rowHtml}\n    </tbody>\n  </table>`;\n}\n\nconst answeredCount  = items.filter(r => r.json.current_response !== 'UNKNOWN').length;\nconst totalCount     = items.length;\nconst progressPct    = Math.round(100 * answeredCount / totalCount);\n\nconst progressBar = `\n<div style=\"background:#e2e8f0;border-radius:4px;height:8px;margin:12px 24px 4px\">\n  <div style=\"background:#3b82f6;border-radius:4px;height:8px;width:${progressPct}%\"></div>\n</div>\n<p style=\"color:#64748b;font-size:12px;margin:0 24px 16px\">\n  ${answeredCount} of ${totalCount} questions answered\n</p>`;\n\nconst html = `<!DOCTYPE html>\n<html>\n<head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"></head>\n<body style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:0;padding:20px;background:#f8fafc\">\n<div style=\"max-width:720px;margin:0 auto;background:#fff;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,.1);overflow:hidden\">\n\n  <div style=\"background:#1e40af;padding:24px\">\n    <h1 style=\"color:#fff;margin:0;font-size:20px\">&#128203; Tax Return Checklist — FY${fy_year}</h1>\n    <p style=\"color:#bfdbfe;margin:6px 0 0;font-size:14px\">\n      Please confirm which items apply to your ${fy_year - 1}–${fy_year} return.\n      Filled answers are shown bold — click to change at any time.\n    </p>\n  </div>\n\n  ${progressBar}\n\n  ${sectionHtml}\n\n  <div style=\"padding:20px 24px;border-top:1px solid #e2e8f0;text-align:center\">\n    <a href=\"${metabaseUrl}\" style=\"color:#1e40af;font-size:13px;text-decoration:none\">\n      &#128202; View Completeness Dashboard in Metabase\n    </a>\n  </div>\n\n</div>\n</body>\n</html>`;\n\nconst subject = `TC Checklist FY${fy_year} — ${answeredCount}/${totalCount} questions answered`;\n\nreturn [{ json: { html, subject, answeredCount, totalCount, fy_year } }];"
+      },
+      "id": "c3d4e5f6-0003-0003-0003-000000000004",
+      "name": "Build Questionnaire Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 390]
+    },
+    {
+      "parameters": {
+        "sendTo": "toshach@gmail.com",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false,
+          "mimeType": "html"
+        }
+      },
+      "id": "c3d4e5f6-0003-0003-0003-000000000005",
+      "name": "Send Questionnaire",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1120, 390],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "WcOe7o1be8G2TzJ4",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [[{ "node": "Set FY Year", "type": "main", "index": 0 }]]
+    },
+    "Set FY Year": {
+      "main": [[{ "node": "Get Questionnaire Items", "type": "main", "index": 0 }]]
+    },
+    "Get Questionnaire Items": {
+      "main": [[{ "node": "Build Questionnaire Email", "type": "main", "index": 0 }]]
+    },
+    "Build Questionnaire Email": {
+      "main": [[{ "node": "Send Questionnaire", "type": "main", "index": 0 }]]
+    }
+  },
+  "_n8nId": "5hjZced7KOR1nx3I",
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "meta": { "instanceId": "2368e69b5c080df17f325116bff5beaa65186ed8d19ea4dc43edb77db5ef060f" },
+  "tags": [{ "name": "tax-collector" }]
+}

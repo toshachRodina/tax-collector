@@ -2,8 +2,8 @@
 
 > Live handoff document. Update before ending any session or switching tools.
 
-**Last updated**: 2026-03-29 (session 13 — Full pipeline working; granular bill detail capture next)
-**Current mode**: Enhancement — pipeline end-to-end confirmed; extending Ollama prompt for line-item extraction
+**Last updated**: 2026-03-30 (session 14 — 3-year backfill complete; review loop and few-shot training next)
+**Current mode**: Post-backfill — 360 emails landed; LOAD_CORE to run; review + few-shot feedback loop to build
 **Active branch**: master
 
 ---
@@ -18,7 +18,8 @@
 - [x] `specs/features/003-merge-to-core.md` — WRITTEN (session 13)
 - [x] `taxcollectordb` provisioned — 5 schemas, 15 tables, 7 mart views, seed data, smoke tests green
 - [x] `prod/schema/DDL/` — 8 DDL files (000–006 + smoke test)
-- [x] `prod/workflows/TC_EXTRACT_GMAIL.json` — LIVE, working end-to-end (24 emails processed)
+- [x] `prod/workflows/WIP_EXTRACT_GMAIL.json` — LIVE working workflow (replaces TC_EXTRACT_GMAIL.json which never worked reliably). Loops over individual emails, not bulk. Has watermark + 3-day buffer + 2022-07-01 fallback.
+- [x] `prod/workflows/TC_EXTRACT_GMAIL.json` — SUPERSEDED. Do not use. WIP_EXTRACT_GMAIL.json is the working one.
 - [x] `prod/workflows/WIP_LOAD_CORE_TAX_DOCS.json` — built, user imports to n8n
 - [x] `prod/scripts/process_document.py` — deployed to server, working
 - [x] `maintenance/scripts/sp_merge_tax_documents.sql` — deployed to live DB
@@ -28,11 +29,12 @@
 
 **Gmail pipeline (working):**
 ```
-[n8n: TC_EXTRACT_GMAIL — Schedule or Manual]
-  → Gmail search (has:attachment filename:pdf, 3-month test window)
+[n8n: WIP_EXTRACT_GMAIL — Manual trigger]  ← THIS IS THE WORKING ONE
+  → Gmail search (has:attachment filename:pdf, watermark-based after:date)
+  → Loop Over Emails (one at a time)
   → for each email: download attachment binary → WriteBinaryFile → process_document.py
       (pdfplumber → Ollama qwen2.5:14b → file to TC_DOCS_ROOT → land to landing.tax_documents)
-  → [SEPARATE] WIP_LOAD_CORE_TAX_DOCS (manual trigger for now)
+  → [SEPARATE] WIP_LOAD_CORE_TAX_DOCS (manual trigger)
       → Start Batch → CALL core.sp_merge_tax_documents(NULL) → Get Counts → Complete Batch
 ```
 
@@ -63,16 +65,15 @@
 - Filed files at correct network-visible path: X:\data\tax-collector\2025-2026\...
 
 ### What's next (priority order)
-1. **[NEXT] Granular bill detail capture** — extend Ollama prompt to extract line_items from utility bills
+1. **[IMMEDIATE] Run WIP_LOAD_CORE_TAX_DOCS** — 360 landing rows waiting to be merged to core
+2. **Review backfill results in DBeaver** — use NEEDS_REVIEW / AUTO_CONFIRMED queries to tag records
+3. **Fix apostrophe bug in WIP_EXTRACT_GMAIL** — `safeName` regex must strip `'` to prevent shell quoting failure (1 email failed: Barron's crypto article — not a tax doc, no loss)
+4. **Wire up few-shot feedback loop** — AFTER reviewing backfill results. Query CONFIRMED/REJECTED examples from core, prepend to Ollama prompt in process_document.py. Only valuable once diverse labelled set exists (post-backfill review).
+5. **Granular bill detail capture** — extend Ollama prompt to extract line_items from utility bills
    - line_items: array of {description, period, quantity, unit, rate, amount}
    - Store in raw_json (already JSONB in landing) → flows to core via SP
    - Create `mart.vw_utility_bills` view exposing line_items for solar battery ROI analysis
-   - Deploy: update process_document.py → deploy bat → re-run extract on utility bills
-2. **Re-run full test** — truncate landing + core (user runs in DBeaver), re-run TC_EXTRACT_GMAIL + WIP_LOAD_CORE_TAX_DOCS
-3. **3-year historical backfill** — change Gmail query `after:` date to 2022/07/01 (currently 3-month test window)
-4. **mart.vw_utility_bills** — spec 003 section 11 view for solar/utility analysis
-5. **DBeaver review workflow** — spec 003 section 9: queries for CONFIRMED/REJECTED tagging
-6. **Watermark revert** — currently 3-month test window; revert to full FY/watermark incremental after backfill
+6. **DBeaver review queries** — spec 003 section 9: canned queries for CONFIRMED/REJECTED tagging workflow
 7. **Remove test_classify.py** — already deleted from server; delete from maintenance/scripts/ locally
 
 ### Open items (lower priority)
@@ -99,6 +100,8 @@
 - **n8n Tax Collector DB credential**: ID `GhZL6n0TTt2R9eJ7`, connects to `taxcollectordb` as `taxcollectorusr`
 - **Workflow push**: `bash maintenance/scripts/push-workflow.sh prod/workflows/<file>.json` — requires `"_n8nId"` field. First-time creation: omit `_n8nId`.
 - **Workflow orchestration**: Child workflows have Manual Trigger + Execute Workflow Trigger. Parent orchestrator handles scheduling. AI builds children only.
+- **WORKING WORKFLOW**: `WIP_EXTRACT_GMAIL.json` is the live Gmail extractor. `TC_EXTRACT_GMAIL.json` is superseded — do not reference it.
+- **Watermark**: `WIP_EXTRACT_GMAIL` → Get Watermark queries `core.tax_documents` MAX(received_at) - 3 days. Empty core → falls back to `2022-07-01`. Build Gmail Query uses `parseInt(watermark_ms)` (bigint comes as string from Postgres).
 - **sp_merge_tax_documents**: Called with NULL (not a batch_id) — processes ALL unprocessed landing rows. Has safe_to_date() for invalid LLM dates. Classification model hardcoded as 'qwen2.5:14b'.
 - **TC_DOCS_ROOT**: `/data/tc-docs` in container = `/mnt/disk2/data/tax-collector/` on host = `X:\data\tax-collector\` on Windows
 - **review_status values**: AUTO_CONFIRMED (confidence >= 0.75), NEEDS_REVIEW (< 0.75), AUTO_REJECTED (not used yet), CONFIRMED, REJECTED (user-set via DBeaver)
@@ -113,6 +116,28 @@
 ---
 
 ## Session Log
+
+### 2026-03-30 (session 14) — 3-year backfill complete; review + training loop next
+
+**What was done:**
+- Confirmed `WIP_EXTRACT_GMAIL.json` is the working workflow — `TC_EXTRACT_GMAIL.json` is permanently superseded
+- Clarified context auto-compression (user doesn't need to manage it; `/handoff` only needed before genuinely closing chat)
+- Confirmed: 24 reviewed records (CONFIRMED/REJECTED) are NOT sufficient for few-shot training yet — wait for post-backfill review
+- Truncated `core.tax_documents` and `landing.tax_documents` in DBeaver (user ran)
+- Fixed watermark: Get Watermark query updated to use `2022-07-01` fallback + 3-day buffer; Build Gmail Query fixed with `parseInt(watermark_ms)` (bigint comes as string from Postgres — was causing Invalid Date)
+- 3-year backfill ran — 360 emails processed successfully over ~4 hours
+- 1 email failed (last one): Barron's crypto article — apostrophe in filename broke shell single-quote arg. Not a tax doc, no rerun needed. Fix pending in `safeName` regex.
+
+**Key decisions:**
+- Few-shot feedback loop deferred until post-backfill review produces diverse labelled set
+- Water bills: NOT claimable under ATO home office rules — reject them
+- Ambiguous records (e.g. Officeworks paper for someone else): leave as NEEDS_REVIEW with reviewer_notes, hand to accountant
+- Confidence score = model certainty about classification, NOT deductibility — high confidence wrong answers are expected for out-of-scope purchases
+- Keep `core.tax_documents` intact between runs — ON CONFLICT preserves CONFIRMED/REJECTED; no need to truncate for weekly incremental runs
+
+**Next session starts with:** Run WIP_LOAD_CORE_TAX_DOCS to merge 360 landing rows to core, then review backfill results in DBeaver.
+
+---
 
 ### 2026-03-29 (session 13) — Full pipeline working; line-item extraction next
 
