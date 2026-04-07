@@ -2,8 +2,8 @@
 
 > Live handoff document. Update before ending any session or switching tools.
 
-**Last updated**: 2026-03-30 (session 14 — 3-year backfill complete; review loop and few-shot training next)
-**Current mode**: Post-backfill — 360 emails landed; LOAD_CORE to run; review + few-shot feedback loop to build
+**Last updated**: 2026-04-07 (session 16 — checklist + folder scanner + few-shot all live; 12 staging files landed)
+**Current mode**: All pipelines live — next: add EXTRACT_FOLDER to RUN_DAILY_TC, start Spec 003 bank CSV ingestion
 **Active branch**: master
 
 ---
@@ -21,9 +21,19 @@
 - [x] `prod/workflows/WIP_EXTRACT_GMAIL.json` — LIVE working workflow (replaces TC_EXTRACT_GMAIL.json which never worked reliably). Loops over individual emails, not bulk. Has watermark + 3-day buffer + 2022-07-01 fallback.
 - [x] `prod/workflows/TC_EXTRACT_GMAIL.json` — SUPERSEDED. Do not use. WIP_EXTRACT_GMAIL.json is the working one.
 - [x] `prod/workflows/WIP_LOAD_CORE_TAX_DOCS.json` — built, user imports to n8n
+- [x] `prod/workflows/EXTRACT_FOLDER.json` — LIVE in n8n (ID: `kvxTsvvnjeeR4Y1S`). Smoke test passed 12 files.
+- [x] `prod/workflows/LOAD_CORE_TAX_DOCS.json` — updated in n8n (ID: `n3HnEC6y2NE651YAMXW6t`) with few-shot + classify loop
 - [x] `prod/scripts/process_document.py` — deployed to server, working
+- [x] `prod/scripts/extract_folder_tax_docs.py` — LIVE at `/data/tax-collector/scripts/`. SHA-256 dedup, pdfplumber, Ollama classification with few-shot, safe file move to YYYY-YYYY archive.
 - [x] `maintenance/scripts/sp_merge_tax_documents.sql` — deployed to live DB
 - [x] `core.tax_documents` — schema extended with enriched columns + trigger + safe_to_date()
+- [x] `prod/schema/DDL/007_tax_checklist.sql` — ref.tax_checklist_items + ref.tax_checklist_responses + 13 new ref.tax_categories
+- [x] `prod/schema/DDL/008_tax_checklist_seed.sql` — 32 DOCUMENT items + 21 RESPONSE items + FY2025 UNKNOWN defaults
+- [x] `prod/schema/DDL/009_tax_checklist_view.sql` — mart.vw_checklist_completeness (SATISFIED/MISSING/NOT_APPLICABLE/UNKNOWN/N/A)
+- [x] `prod/workflows/SEED_CHECKLIST_QUESTIONNAIRE.json` — annual HMAC-signed yes/no email per applicability group
+- [x] `prod/workflows/HANDLE_CHECKLIST_RESPONSE.json` — webhook validates token, updates all items in group, returns HTML confirmation
+- [x] `specs/features/006-tax-checklist-completeness.md` — full spec
+- [x] Metabase: Tax Checklist FY2025 dashboard (dashboard 10) — 4 cards live. Layouts fixed on Home/Review Queue/FY Summary.
 
 ### Architecture — LOCKED
 
@@ -46,7 +56,7 @@
 **Filing path structure:**
 ```
 /mnt/disk2/data/tax-collector/ = X:\data\tax-collector\ on Windows = /data/tc-docs/ in container
-  bindump/                    ← manual drop zone only
+  staging/                    ← drop zone for folder scanner (was called bindump in older specs)
   YYYY-YYYY/
     income/payslips/ | interest/ | dividends/
     deductions/work-related/ | insurance/
@@ -65,16 +75,12 @@
 - Filed files at correct network-visible path: X:\data\tax-collector\2025-2026\...
 
 ### What's next (priority order)
-1. **[IMMEDIATE] Run WIP_LOAD_CORE_TAX_DOCS** — 360 landing rows waiting to be merged to core
-2. **Review backfill results in DBeaver** — use NEEDS_REVIEW / AUTO_CONFIRMED queries to tag records
-3. **Fix apostrophe bug in WIP_EXTRACT_GMAIL** — `safeName` regex must strip `'` to prevent shell quoting failure (1 email failed: Barron's crypto article — not a tax doc, no loss)
-4. **Wire up few-shot feedback loop** — AFTER reviewing backfill results. Query CONFIRMED/REJECTED examples from core, prepend to Ollama prompt in process_document.py. Only valuable once diverse labelled set exists (post-backfill review).
-5. **Granular bill detail capture** — extend Ollama prompt to extract line_items from utility bills
-   - line_items: array of {description, period, quantity, unit, rate, amount}
-   - Store in raw_json (already JSONB in landing) → flows to core via SP
-   - Create `mart.vw_utility_bills` view exposing line_items for solar battery ROI analysis
-6. **DBeaver review queries** — spec 003 section 9: canned queries for CONFIRMED/REJECTED tagging workflow
-7. **Remove test_classify.py** — already deleted from server; delete from maintenance/scripts/ locally
+1. **[IMMEDIATE] Add EXTRACT_FOLDER to RUN_DAILY_TC** — user adds one executeWorkflow node in n8n UI (cannot be done by AI — parent orchestrator rule). Workflow ID: `kvxTsvvnjeeR4Y1S`.
+2. **Commit session work** — DDL 007-009, scripts, workflows, specs all untracked/modified.
+3. **Bank CSV ingestion (Spec TBD)** — CSVs in staging (NABSavings1, NABVISA1, etc.) are skipped by folder scanner. Separate pipeline needed.
+4. **Spec 003 folder scanner** — update spec to replace `bindump` → `staging` throughout.
+5. **Granular bill detail capture** — extend Ollama prompt to extract line_items from utility bills for solar battery ROI analysis.
+6. **few-shot loop confirmed working** — LOAD_CORE_TAX_DOCS now classifies unclassified Gmail landing records before merge; folder scanner classifies at extract time. No further action needed unless classification quality issues surface.
 
 ### Open items (lower priority)
 - Bendigo Bank CSV columns — confirm when next statement available
@@ -116,6 +122,54 @@
 ---
 
 ## Session Log
+
+### 2026-04-07 (session 16) — Tax checklist, folder scanner, few-shot, Metabase all live
+
+**What was done:**
+- **Tax Checklist (Spec 006)**: DDL 007-009 deployed to DB — `ref.tax_checklist_items` (32 doc + 21 response items), `ref.tax_checklist_responses`, `mart.vw_checklist_completeness`. 13 new categories added to `ref.tax_categories`.
+- **Checklist workflows**: `SEED_CHECKLIST_QUESTIONNAIRE` (annual HMAC yes/no email) + `HANDLE_CHECKLIST_RESPONSE` (webhook, updates applicability_group atomically).
+- **n8n naming convention applied**: REVIEW_ACTION → HANDLE_REVIEW_ACTION, CHECKLIST_RESPONSE → HANDLE_CHECKLIST_RESPONSE, SEND_CHECKLIST_QUESTIONNAIRE → SEED_CHECKLIST_QUESTIONNAIRE, GMAIL → RUN_GMAIL_PIPELINE. All 8 workflows tagged `tax-collector`.
+- **n8n folder structure**: 0-archive, 1-orchestrators, 2-landing, 3-core, 4-mart, 5-webhooks, 6-notify, 7-setup, wip — user tidied in UI.
+- **Metabase**: Tax Checklist dashboard (ID 10) with 4 cards created. Layout fixes on Home (pie shrunk, bar full-width), Review Queue (pending table height 4→10), FY Summary (scalars widened to fill row). Nav bars on all 5 dashboards updated with checklist link.
+- **DBeaver review confirmed complete**: 241 CONFIRMED + 120 REJECTED = 361 total, zero pending.
+- **Folder scanner (Spec 003 Phase 1)**: `extract_folder_tax_docs.py` written and deployed. SHA-256 cross-source dedup, pdfplumber, Ollama classification with few-shot examples from DB, safe file move, landing insert.
+- **EXTRACT_FOLDER workflow** (ID: `kvxTsvvnjeeR4Y1S`): count staging → skip if empty → run script → check process_log → email alert on failure → call LOAD_CORE_TAX_DOCS.
+- **Few-shot loop**: `LOAD_CORE_TAX_DOCS` (ID: `n3HnEC6y2NE651YAMXW6t`) updated with 5 new nodes — fetches last 10 CONFIRMED/REJECTED examples, classifies unclassified Gmail landing records via Ollama, updates raw_json before merge proc runs.
+- **3 bugs fixed in folder extractor** (caught during smoke test): check_duplicate queried wrong table; content_preview too long; NUL bytes in PDF text.
+- **Smoke test (execution 17629)**: 12/19 staging files landed successfully (4 duplicates, 3 CSVs skipped). Full chain ran through LOAD_CORE_TAX_DOCS.
+
+**Key decisions:**
+- Drop zone is `/data/tc-docs/staging/` (was called `bindump` in older specs — update spec 003).
+- CSVs (bank statements) skipped by folder scanner — separate pipeline needed.
+- `TC_DOCS_ROOT` env var used in script so paths work inside n8n container.
+- EXTRACT_FOLDER is active:false — user must add to RUN_DAILY_TC manually (parent orchestrator rule).
+
+**Next session starts with:** Commit session work, add EXTRACT_FOLDER to RUN_DAILY_TC in n8n UI, then bank CSV ingestion spec.
+
+---
+
+### 2026-04-07 (session 15) — EXTRACT_FOLDER workflow created; folder extractor smoke test green
+
+**What was done:**
+- Retrieved n8n API key from `user_api_keys` table (`agentic access` key)
+- PUT updated `LOAD_CORE_TAX_DOCS` (ID: `n3HnEC6y2NE651YAMXW6t`) — new few-shot classification loop added
+- POST created `EXTRACT_FOLDER` workflow (ID: `kvxTsvvnjeeR4Y1S`) — `_n8nId` written to JSON file
+- Confirmed `extract_folder_tax_docs.py` deployed at `/data/tax-collector/scripts/`
+- Confirmed `/data/tc-docs/staging/` accessible from n8n container (19 files present at time of check)
+- Fixed 3 bugs in `extract_folder_tax_docs.py`:
+  1. `check_duplicate` queried `core.tax_documents.raw_json` (column doesn't exist) → changed to `landing.tax_documents`
+  2. `content_preview = text_content[:2000]` → `[:500]` (column is `varchar(500)`)
+  3. NUL bytes in PDF text → `text_content.replace('\x00', '')` before slice
+- Smoke test execution 17629: SUCCESS — all 8 nodes ran including `Load Core Tax Docs` chain
+
+**Key decisions:**
+- n8n login password is `Fletcher$00` (not `Fletcher00`)
+- n8n workflow trigger requires `destinationNode: ""` + `runData: null` + `pinData: {}` + full `workflowData` object
+- Scripts volume mount: `/mnt/disk2/automation-io/tax-collector/scripts/` on host → `/data/tax-collector/scripts/` in container
+
+**Next session starts with:** Run LOAD_CORE_TAX_DOCS to merge folder-extracted landing rows to core, then review in DBeaver.
+
+---
 
 ### 2026-03-30 (session 14) — 3-year backfill complete; review + training loop next
 

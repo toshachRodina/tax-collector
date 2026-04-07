@@ -1,0 +1,185 @@
+{
+  "_n8nId": "kvxTsvvnjeeR4Y1S",
+  "name": "EXTRACT_FOLDER",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "b1c2d3e4-0001-0001-0001-000000000001",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 480]
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "b1c2d3e4-0001-0001-0001-000000000002",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "command": "ls /data/tc-docs/staging/ 2>/dev/null | grep -vE '^\\.' | grep -v '^$' | wc -l"
+      },
+      "id": "b1c2d3e4-0001-0001-0001-000000000003",
+      "name": "Count Staging Files",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [460, 380]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ parseInt($json.stdout.trim()) }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "b1c2d3e4-0001-0001-0001-000000000004",
+      "name": "Files Present?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [660, 380]
+    },
+    {
+      "parameters": {
+        "command": "TC_DB_PASSWORD=$TC_DB_PASSWORD TC_DOCS_ROOT=/data/tc-docs python3 /data/tax-collector/scripts/extract_folder_tax_docs.py 2>&1"
+      },
+      "id": "b1c2d3e4-0001-0001-0001-000000000005",
+      "name": "Run Folder Extractor",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [860, 280]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  batch_id,\n  status,\n  rows_extracted,\n  rows_loaded,\n  rows_skipped,\n  error_msg,\n  EXTRACT(EPOCH FROM (completed_at - started_at))::int AS duration_secs\nFROM ctl.process_log\nWHERE workflow_nme = 'TC_EXTRACT_FOLDER'\nORDER BY started_at DESC\nLIMIT 1;",
+        "options": {}
+      },
+      "id": "b1c2d3e4-0001-0001-0001-000000000006",
+      "name": "Get Run Result",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1060, 280],
+      "credentials": {
+        "postgres": {
+          "id": "GhZL6n0TTt2R9eJ7",
+          "name": "Tax Collector DB"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.status }}",
+              "operation": "notEqual",
+              "value2": "SUCCESS"
+            }
+          ]
+        }
+      },
+      "id": "b1c2d3e4-0001-0001-0001-000000000007",
+      "name": "Run Failed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1260, 280]
+    },
+    {
+      "parameters": {
+        "workflowId": "n3HnEC6y2NE651YAMXW6t"
+      },
+      "id": "b1c2d3e4-0001-0001-0001-000000000008",
+      "name": "Load Core Tax Docs",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1460, 200]
+    },
+    {
+      "parameters": {
+        "sendTo": "toshach@gmail.com",
+        "subject": "=TC_EXTRACT_FOLDER FAILED — {{ $json.error_msg || 'Unknown error' }}",
+        "message": "=<p>The <strong>EXTRACT_FOLDER</strong> workflow run failed.</p>\n<p><strong>Status:</strong> {{ $json.status }}</p>\n<p><strong>Error:</strong> {{ $json.error_msg || '—' }}</p>\n<p><strong>Batch ID:</strong> {{ $json.batch_id }}</p>\n<p><strong>Files extracted:</strong> {{ $json.rows_extracted || 0 }}</p>\n<p>Check <code>ctl.process_log</code> and the staging folder for details.</p>",
+        "options": {
+          "appendAttribution": false,
+          "mimeType": "html"
+        }
+      },
+      "id": "b1c2d3e4-0001-0001-0001-000000000009",
+      "name": "Send Error Alert",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1460, 380],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "WcOe7o1be8G2TzJ4",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $input.first().json;\nconst extracted = result.rows_extracted || 0;\nconst loaded = result.rows_loaded || 0;\nconst skipped = result.rows_skipped || 0;\nconst duration = result.duration_secs || 0;\nconsole.log(`EXTRACT_FOLDER: ${extracted} extracted, ${loaded} loaded, ${skipped} skipped in ${duration}s`);\nreturn $input.all();"
+      },
+      "id": "b1c2d3e4-0001-0001-0001-000000000010",
+      "name": "Log Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1460, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "console.log('EXTRACT_FOLDER: staging folder empty — nothing to process');\nreturn [{json: {skipped: true, reason: 'staging empty'}}];"
+      },
+      "id": "b1c2d3e4-0001-0001-0001-000000000011",
+      "name": "Log Empty Staging",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 480]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [[{"node": "Count Staging Files", "type": "main", "index": 0}]]
+    },
+    "When Executed by Another Workflow": {
+      "main": [[{"node": "Count Staging Files", "type": "main", "index": 0}]]
+    },
+    "Count Staging Files": {
+      "main": [[{"node": "Files Present?", "type": "main", "index": 0}]]
+    },
+    "Files Present?": {
+      "main": [
+        [{"node": "Run Folder Extractor", "type": "main", "index": 0}],
+        [{"node": "Log Empty Staging",    "type": "main", "index": 0}]
+      ]
+    },
+    "Run Folder Extractor": {
+      "main": [[{"node": "Get Run Result", "type": "main", "index": 0}]]
+    },
+    "Get Run Result": {
+      "main": [[{"node": "Run Failed?", "type": "main", "index": 0}]]
+    },
+    "Run Failed?": {
+      "main": [
+        [{"node": "Send Error Alert", "type": "main", "index": 0}],
+        [{"node": "Log Success",      "type": "main", "index": 0},
+         {"node": "Load Core Tax Docs","type": "main", "index": 0}]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {"executionOrder": "v1"},
+  "meta": {"instanceId": "2368e69b5c080df17f325116bff5beaa65186ed8d19ea4dc43edb77db5ef060f"},
+  "tags": [{"name": "tax-collector"}]
+}

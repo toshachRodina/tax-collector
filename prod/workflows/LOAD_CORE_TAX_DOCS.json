@@ -63,6 +63,120 @@
     {
       "parameters": {
         "operation": "executeQuery",
+        "query": "SELECT\n  d.subject,\n  d.file_name,\n  c.category_nme,\n  d.is_deductible,\n  d.review_status\nFROM core.tax_documents d\nJOIN ref.tax_categories c ON c.category_id = d.tax_category_id\nWHERE d.review_status IN ('CONFIRMED', 'REJECTED')\n  AND d.tax_category_id IS NOT NULL\nORDER BY d.updated_at DESC NULLS LAST\nLIMIT 10;",
+        "options": {}
+      },
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef000000001a",
+      "name": "Get Few-Shot Examples",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1712,
+        -96
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "GhZL6n0TTt2R9eJ7",
+          "name": "Tax Collector DB"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT landing_id, subject, sender_email, file_name, file_ext\nFROM landing.tax_documents\nWHERE is_processed = FALSE\n  AND raw_json -> 'classification' IS NULL;",
+        "options": {}
+      },
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef000000002b",
+      "name": "Get Unclassified Landing",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1900,
+        -176
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "GhZL6n0TTt2R9eJ7",
+          "name": "Tax Collector DB"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const OLLAMA_URL = 'http://192.168.0.93:11434/api/generate';\nconst MODEL = 'qwen2.5:14b';\nconst CATEGORIES = [\n  'Payment Summary / Income Statement', 'Bank Interest', 'Dividends',\n  'Share Trade / CGT Event', 'Work From Home — Electricity/Gas',\n  'Work From Home — Internet', 'Technology Equipment', 'Software & Subscriptions',\n  'Professional Development', 'Income Protection Insurance',\n  'ATO Notice / Assessment', 'HECS-HELP', 'Superannuation',\n  'Private Health Insurance', 'Rental Income', 'Property Depreciation',\n  'Utility Bill', 'Motor Vehicle / Logbook', 'Donations',\n  'Tax Agent Fees', 'Work-Related Assets', 'Other'\n];\n\nconst examples = $items('Get Few-Shot Examples').map(i => i.json);\nconst fewShotBlock = examples.length >= 3\n  ? 'Here are recent examples of correctly classified documents:\\n' +\n    examples.map(e => `- \"${e.subject || e.file_name}\" → ${e.category_nme} (deductible: ${e.is_deductible})`).join('\\n') + '\\n\\n'\n  : '';\n\nconst records = $input.all().filter(i => i.json && i.json.landing_id != null).map(i => i.json);\nif (records.length === 0) return [{ json: { classified: 0, updates: [] } }];\n\nconst updates = await Promise.all(records.map(async (rec) => {\n  const prompt = `${fewShotBlock}Classify this tax document for Australian personal tax records.\\nSubject: ${rec.subject || '—'}\\nSender: ${rec.sender_email || '—'}\\nFile: ${rec.file_name || '—'}\\n\\nCategories:\\n${CATEGORIES.map(c => '- ' + c).join('\\n')}\\n\\nAlso determine:\\n- fy_year: Australian financial year (e.g. 2025). Null if unclear.\\n- supplier_name: issuing company\\n- is_deductible: true/false\\n- confidence: 0.0 to 1.0\\n\\nRespond ONLY with valid JSON:\\n{\"category\": \"...\", \"fy_year\": 2025, \"supplier_name\": \"...\", \"is_deductible\": false, \"confidence\": 0.85}`;\n\n  let classification;\n  try {\n    const resp = await fetch(OLLAMA_URL, {\n      method: 'POST',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify({ model: MODEL, prompt, stream: false })\n    });\n    const data = await resp.json();\n    const raw = (data.response || '').replace(/```json\\n?/g, '').replace(/```/g, '').trim();\n    classification = JSON.parse(raw);\n  } catch (e) {\n    classification = { category: 'Other', fy_year: null, supplier_name: null, is_deductible: false, confidence: 0.0 };\n  }\n\n  return { landing_id: rec.landing_id, classification };\n}));\n\nreturn [{ json: { classified: updates.length, updates } }];"
+      },
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef000000003c",
+      "name": "Classify Landing Records",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2080,
+        -176
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-classified-gt-zero",
+              "leftValue": "={{ $json.classified }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef000000004d",
+      "name": "IF Has Classifications",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2260,
+        -176
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE landing.tax_documents AS t\nSET raw_json = t.raw_json || jsonb_build_object('classification', u.cls)\nFROM (\n  SELECT\n    (el->>'landing_id')::int AS lid,\n    (el->>'classification')::jsonb AS cls\n  FROM jsonb_array_elements(\n    '{{ JSON.stringify($json.updates) }}'::jsonb\n  ) AS el\n) u\nWHERE t.landing_id = u.lid;",
+        "options": {}
+      },
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef000000005e",
+      "name": "Update Landing Classifications",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        2440,
+        -96
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "GhZL6n0TTt2R9eJ7",
+          "name": "Tax Collector DB"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
         "query": "CALL core.sp_merge_tax_documents(NULL);",
         "options": {}
       },
@@ -71,7 +185,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
       "position": [
-        1712,
+        2620,
         -176
       ],
       "alwaysOutputData": true,
@@ -94,7 +208,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
       "position": [
-        1888,
+        2800,
         -176
       ],
       "alwaysOutputData": true,
@@ -117,7 +231,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
       "position": [
-        2048,
+        2960,
         -176
       ],
       "credentials": {
@@ -139,7 +253,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
       "position": [
-        2224,
+        3100,
         0
       ],
       "credentials": {
@@ -163,7 +277,7 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        2368,
+        3260,
         0
       ],
       "webhookId": "b3324085-43bc-42d7-9df8-9e227a377fd5",
@@ -183,7 +297,7 @@
       "type": "n8n-nodes-base.stopAndError",
       "typeVersion": 1,
       "position": [
-        2512,
+        3420,
         0
       ]
     }
@@ -232,6 +346,89 @@
     },
     "Set Batch ID": {
       "main": [
+        [
+          {
+            "node": "Get Few-Shot Examples",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Few-Shot Examples": {
+      "main": [
+        [
+          {
+            "node": "Get Unclassified Landing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Unclassified Landing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Unclassified Landing": {
+      "main": [
+        [
+          {
+            "node": "Classify Landing Records",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Classify Landing Records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Landing Records": {
+      "main": [
+        [
+          {
+            "node": "IF Has Classifications",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Has Classifications": {
+      "main": [
+        [
+          {
+            "node": "Update Landing Classifications",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge to Core",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Landing Classifications": {
+      "main": [
+        [
+          {
+            "node": "Merge to Core",
+            "type": "main",
+            "index": 0
+          }
+        ],
         [
           {
             "node": "Merge to Core",
@@ -323,5 +520,9 @@
     "instanceId": "2368e69b5c080df17f325116bff5beaa65186ed8d19ea4dc43edb77db5ef060f"
   },
   "id": "n3HnEC6y2NE651YAMXW6t",
-  "tags": []
+  "tags": [
+    {
+      "name": "tax-collector"
+    }
+  ]
 }
