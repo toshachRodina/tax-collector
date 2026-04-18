@@ -37,7 +37,7 @@ DB_CONFIG = {
     "user": "taxcollectorusr",
 }
 
-OLLAMA_URL = "http://192.168.0.93:11434/api/generate"
+OLLAMA_URL = "http://192.168.0.96:11434/api/generate"
 OLLAMA_MODEL = "qwen2.5:14b"
 OLLAMA_TIMEOUT = 180
 OLLAMA_CTX = 32768          # 32K context window — fits ~24K chars of document text

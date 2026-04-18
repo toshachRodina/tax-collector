@@ -43,7 +43,7 @@ SOURCE_TYPE    = "FOLDER"
 STAGING_DIR    = Path(os.environ.get("TC_DOCS_ROOT", "/data/tc-docs")) / "staging"
 ARCHIVE_ROOT   = Path(os.environ.get("TC_DOCS_ROOT", "/data/tc-docs"))
 
-OLLAMA_URL     = "http://192.168.0.93:11434/api/generate"
+OLLAMA_URL     = "http://192.168.0.96:11434/api/generate"
 OLLAMA_MODEL   = "qwen2.5:14b"
 
 SUPPORTED_EXTS = {".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".docx"}
@@ -151,21 +151,45 @@ def get_current_fy_year(conn) -> int:
     return row[0].year
 
 
-def check_duplicate(conn, file_hash: str) -> Optional[int]:
+def check_duplicate(conn, file_hash: str, file_name: str) -> Optional[str]:
     """
-    Return landing_id if this file_hash already exists in landing.tax_documents,
+    Return the reason string ('HASH' or 'FILENAME') if this file is a duplicate,
     otherwise return None.
-    """
-    sql = """
-        SELECT landing_id
-        FROM landing.tax_documents
-        WHERE raw_json->>'file_hash' = %s
-        LIMIT 1;
+
+    Two checks:
+    1. Hash match in landing.tax_documents — catches re-dropped copies of the
+       same file that came through the folder scanner before.
+    2. Filename match in core.tax_documents — catches cross-source duplicates,
+       e.g. a PDF that already arrived via Gmail and was loaded to core.
     """
     with conn.cursor() as cur:
-        cur.execute(sql, (file_hash,))
-        row = cur.fetchone()
-    return row[0] if row else None
+        # 1. Hash match anywhere in landing (catches re-drops of folder-processed files)
+        cur.execute(
+            "SELECT landing_id FROM landing.tax_documents "
+            "WHERE raw_json->>'file_hash' = %s LIMIT 1;",
+            (file_hash,),
+        )
+        if cur.fetchone():
+            return "HASH"
+
+        # 2. Filename match in landing (catches Gmail files not yet merged to core)
+        cur.execute(
+            "SELECT landing_id FROM landing.tax_documents "
+            "WHERE file_name = %s LIMIT 1;",
+            (file_name,),
+        )
+        if cur.fetchone():
+            return "FILENAME_LANDING"
+
+        # 3. Filename match in core (catches Gmail files already merged)
+        cur.execute(
+            "SELECT doc_id FROM core.tax_documents WHERE file_name = %s LIMIT 1;",
+            (file_name,),
+        )
+        if cur.fetchone():
+            return "FILENAME_CORE"
+
+    return None
 
 
 def fetch_few_shot_examples(conn) -> list[dict]:
@@ -439,11 +463,21 @@ def safe_move(src: Path, dest: Path) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     if dest.exists():
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        stem = dest.stem
-        suffix = dest.suffix
-        dest = dest.parent / f"{stem}_{timestamp}{suffix}"
-        log.info(f"Destination already exists — renaming to {dest.name}")
+        # If hashes match, the file is already in the right place (orphaned DB record).
+        # Remove the staged copy and return the destination so a landing row can be created.
+        src_hash  = hashlib.sha256(src.read_bytes()).hexdigest()
+        dest_hash = hashlib.sha256(dest.read_bytes()).hexdigest()
+        if src_hash == dest_hash:
+            src.unlink()
+            log.info(
+                f"Destination already exists with identical content — "
+                f"staged copy removed, creating DB record for {dest.name}"
+            )
+            return dest
+        raise RuntimeError(
+            f"Destination already exists with DIFFERENT content: {dest} — "
+            "manual review required, staged file left in place"
+        )
 
     shutil.move(str(src), str(dest))
 
@@ -506,10 +540,10 @@ def main():
                 rows_failed += 1
                 continue
 
-            existing_doc_id = check_duplicate(conn, file_hash)
-            if existing_doc_id is not None:
+            dup_reason = check_duplicate(conn, file_hash, src.name)
+            if dup_reason is not None:
                 log.info(
-                    f"DUPLICATE: {src.name} matches landing_id {existing_doc_id} — skipping"
+                    f"DUPLICATE ({dup_reason}): {src.name} already exists — skipping"
                 )
                 rows_skipped += 1
                 continue

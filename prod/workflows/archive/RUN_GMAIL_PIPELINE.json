@@ -1,0 +1,166 @@
+{
+  "name": "RUN_GMAIL_PIPELINE",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "rp01",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "rp02",
+      "name": "Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "AkC-XOe-umZxSsEEnaM0-"
+      },
+      "id": "rp03",
+      "name": "EXTRACT GMAIL",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        480,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "kvxTsvvnjeeR4Y1S"
+      },
+      "id": "rp04",
+      "name": "EXTRACT FOLDER",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        700,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "FusYlix9qih7NUww"
+      },
+      "id": "rp05",
+      "name": "EXTRACT BANK CSV",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        920,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "n3HnEC6y2NE651YAMXW6t"
+      },
+      "id": "rp06",
+      "name": "LOAD CORE TAX DOCS",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        1140,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "NJJXRGO0WmRaz1Qe"
+      },
+      "id": "rp07",
+      "name": "LOAD CORE BANK",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        1360,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "EXTRACT GMAIL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "EXTRACT GMAIL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "EXTRACT GMAIL": {
+      "main": [
+        [
+          {
+            "node": "EXTRACT FOLDER",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "EXTRACT FOLDER": {
+      "main": [
+        [
+          {
+            "node": "EXTRACT BANK CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "EXTRACT BANK CSV": {
+      "main": [
+        [
+          {
+            "node": "LOAD CORE TAX DOCS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LOAD CORE TAX DOCS": {
+      "main": [
+        [
+          {
+            "node": "LOAD CORE BANK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "_n8nId": "9H6SDSM3yplwA6B1"
+}

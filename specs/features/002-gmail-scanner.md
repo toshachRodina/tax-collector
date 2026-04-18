@@ -48,7 +48,7 @@ Both paths land metadata to `landing.tax_documents`. Both call `core.sp_merge_ta
     └── NO ───────────────────────────────────────────────────────────────────
         [n8n: Code — Extract Body Text]     decode base64 body, strip HTML
             ↓
-        [n8n: HTTP Request — Ollama]        POST 192.168.0.93:11434/api/generate
+        [n8n: HTTP Request — Ollama]        POST 192.168.0.96:11434/api/generate
             ↓
         [n8n: Code — Parse Ollama Response] build landing row dict
             ↓
@@ -146,7 +146,7 @@ The `--meta` JSON contains: `source_id` (Gmail message ID), `subject`, `sender_e
 
 What `process_document.py` does:
 1. Extracts text from PDF with pdfplumber
-2. Sends text to Ollama (`qwen2.5:14b` on `192.168.0.93:11434`) for classification
+2. Sends text to Ollama (`qwen2.5:14b` on `192.168.0.96:11434`) for classification
 3. Determines filing path: `{TC_DOCS_ROOT}/YYYY-YYYY/{category_subdir}/{filename}`
 4. Moves file from staging to filing path (creates directory if needed)
 5. Inserts to `landing.tax_documents` with classification result in `raw_json`
@@ -183,7 +183,7 @@ Final path example: `/data/tax-collector/docs/2024-2025/income/payslips/MyPaysli
 For emails without PDF attachments, the pipeline classifies the email body text directly in n8n:
 
 1. **Extract Body Text** (Code node): decode base64 body data, strip HTML tags, fall back to Gmail `snippet`
-2. **Ollama Classify** (HTTP Request): POST to `http://192.168.0.93:11434/api/generate`
+2. **Ollama Classify** (HTTP Request): POST to `http://192.168.0.96:11434/api/generate`
    - Model: `qwen2.5:14b`, `stream: false`, `format: json`, timeout: 120,000ms
    - Prompt includes subject + body text (truncated to 4000 chars)
    - Response: `{category, fy_year, is_deductible, deductible_amount, confidence, summary}`
@@ -242,7 +242,7 @@ Also: `settings.errorWorkflow: "oFeU0bOzAsRxU910"` as fallback for infrastructur
 | 11 | Check Exit Code | code | parse exitCode, tag success/fail |
 | 12 | Gmail — Get Full Message | gmail | get, format: full (no binary) |
 | 13 | Extract Body Text | code | base64 decode, strip HTML |
-| 14 | Ollama Classify Body | httpRequest | POST to 192.168.0.93:11434 |
+| 14 | Ollama Classify Body | httpRequest | POST to 192.168.0.96:11434 |
 | 15 | Parse Ollama + Build Row | code | build landing row dict |
 | 16 | Insert Body Landing Row | postgres | INSERT ON CONFLICT DO NOTHING |
 | 17 | Merge Body to Core | postgres | CALL sp_merge_tax_documents |

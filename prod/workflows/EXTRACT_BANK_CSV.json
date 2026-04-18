@@ -1,10 +1,10 @@
 {
-  "_n8nId": "kvxTsvvnjeeR4Y1S",
-  "name": "EXTRACT_FOLDER",
+  "_n8nId": "FusYlix9qih7NUww",
+  "name": "EXTRACT_BANK_CSV",
   "nodes": [
     {
       "parameters": {},
-      "id": "b1c2d3e4-0001-0001-0001-000000000001",
+      "id": "bc001111-0001-0001-0001-000000000001",
       "name": "Manual Trigger",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
@@ -14,7 +14,7 @@
       "parameters": {
         "inputSource": "passthrough"
       },
-      "id": "b1c2d3e4-0001-0001-0001-000000000002",
+      "id": "bc001111-0001-0001-0001-000000000002",
       "name": "When Executed by Another Workflow",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
@@ -22,10 +22,10 @@
     },
     {
       "parameters": {
-        "command": "ls /data/tc-docs/staging/ 2>/dev/null | grep -vE '^\\.' | grep -v '^$' | wc -l"
+        "command": "ls /data/tc-docs/staging/NAB*.csv 2>/dev/null | wc -l"
       },
-      "id": "b1c2d3e4-0001-0001-0001-000000000003",
-      "name": "Count Staging Files",
+      "id": "bc001111-0001-0001-0001-000000000003",
+      "name": "Count CSV Files",
       "type": "n8n-nodes-base.executeCommand",
       "typeVersion": 1,
       "position": [460, 380]
@@ -42,7 +42,7 @@
           ]
         }
       },
-      "id": "b1c2d3e4-0001-0001-0001-000000000004",
+      "id": "bc001111-0001-0001-0001-000000000004",
       "name": "Files Present?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
@@ -50,10 +50,10 @@
     },
     {
       "parameters": {
-        "command": "TC_DB_PASSWORD=$TC_DB_PASSWORD TC_DOCS_ROOT=/data/tc-docs python3 /data/tax-collector/scripts/extract_folder_tax_docs.py 2>&1"
+        "command": "TC_DB_PASSWORD=$TC_DB_PASSWORD TC_DOCS_ROOT=/data/tc-docs python3 /data/tax-collector/scripts/extract_bank_csv.py 2>&1"
       },
-      "id": "b1c2d3e4-0001-0001-0001-000000000005",
-      "name": "Run Folder Extractor",
+      "id": "bc001111-0001-0001-0001-000000000005",
+      "name": "Run Bank CSV Extractor",
       "type": "n8n-nodes-base.executeCommand",
       "typeVersion": 1,
       "position": [860, 280]
@@ -61,10 +61,10 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT\n  batch_id,\n  status,\n  rows_extracted,\n  rows_loaded,\n  rows_skipped,\n  error_msg,\n  EXTRACT(EPOCH FROM (completed_at - started_at))::int AS duration_secs\nFROM ctl.process_log\nWHERE workflow_nme = 'TC_EXTRACT_FOLDER'\nORDER BY started_at DESC\nLIMIT 1;",
+        "query": "SELECT\n  batch_id,\n  status,\n  rows_extracted,\n  rows_loaded,\n  rows_skipped,\n  error_msg,\n  EXTRACT(EPOCH FROM (completed_at - started_at))::int AS duration_secs\nFROM ctl.process_log\nWHERE workflow_nme = 'TC_EXTRACT_BANK_CSV'\nORDER BY started_at DESC\nLIMIT 1;",
         "options": {}
       },
-      "id": "b1c2d3e4-0001-0001-0001-000000000006",
+      "id": "bc001111-0001-0001-0001-000000000006",
       "name": "Get Run Result",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
@@ -89,7 +89,7 @@
           ]
         }
       },
-      "id": "b1c2d3e4-0001-0001-0001-000000000007",
+      "id": "bc001111-0001-0001-0001-000000000007",
       "name": "Run Failed?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
@@ -97,15 +97,35 @@
     },
     {
       "parameters": {
+        "jsCode": "console.log('EXTRACT_BANK_CSV: staging folder empty — no NAB CSV files to process');\nreturn [{json: {skipped: true, reason: 'no NAB CSV files in staging'}}];"
+      },
+      "id": "bc001111-0001-0001-0001-000000000008",
+      "name": "Log Empty Staging",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 480]
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $input.first().json;\nconst extracted = result.rows_extracted || 0;\nconst loaded = result.rows_loaded || 0;\nconst skipped = result.rows_skipped || 0;\nconst duration = result.duration_secs || 0;\nconsole.log(`EXTRACT_BANK_CSV: ${extracted} rows extracted, ${loaded} loaded, ${skipped} skipped in ${duration}s`);\nreturn $input.all();"
+      },
+      "id": "bc001111-0001-0001-0001-000000000009",
+      "name": "Log Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1460, 100]
+    },
+    {
+      "parameters": {
         "sendTo": "toshach@gmail.com",
-        "subject": "=TC_EXTRACT_FOLDER FAILED — {{ $json.error_msg || 'Unknown error' }}",
-        "message": "=<p>The <strong>EXTRACT_FOLDER</strong> workflow run failed.</p>\n<p><strong>Status:</strong> {{ $json.status }}</p>\n<p><strong>Error:</strong> {{ $json.error_msg || '—' }}</p>\n<p><strong>Batch ID:</strong> {{ $json.batch_id }}</p>\n<p><strong>Files extracted:</strong> {{ $json.rows_extracted || 0 }}</p>\n<p>Check <code>ctl.process_log</code> and the staging folder for details.</p>",
+        "subject": "=TC_EXTRACT_BANK_CSV FAILED — {{ $json.error_msg || 'Unknown error' }}",
+        "message": "=<p>The <strong>EXTRACT_BANK_CSV</strong> workflow run failed.</p>\n<p><strong>Status:</strong> {{ $json.status }}</p>\n<p><strong>Error:</strong> {{ $json.error_msg || '—' }}</p>\n<p><strong>Batch ID:</strong> {{ $json.batch_id }}</p>\n<p><strong>Rows extracted:</strong> {{ $json.rows_extracted || 0 }}</p>\n<p>Check <code>ctl.process_log</code> and the staging folder for details.</p>",
         "options": {
           "appendAttribution": false,
           "mimeType": "html"
         }
       },
-      "id": "b1c2d3e4-0001-0001-0001-000000000009",
+      "id": "bc001111-0001-0001-0001-000000000010",
       "name": "Send Error Alert",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
@@ -116,45 +136,25 @@
           "name": "Gmail account"
         }
       }
-    },
-    {
-      "parameters": {
-        "jsCode": "const result = $input.first().json;\nconst extracted = result.rows_extracted || 0;\nconst loaded = result.rows_loaded || 0;\nconst skipped = result.rows_skipped || 0;\nconst duration = result.duration_secs || 0;\nconsole.log(`EXTRACT_FOLDER: ${extracted} extracted, ${loaded} loaded, ${skipped} skipped in ${duration}s`);\nreturn $input.all();"
-      },
-      "id": "b1c2d3e4-0001-0001-0001-000000000010",
-      "name": "Log Success",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1460, 100]
-    },
-    {
-      "parameters": {
-        "jsCode": "console.log('EXTRACT_FOLDER: staging folder empty — nothing to process');\nreturn [{json: {skipped: true, reason: 'staging empty'}}];"
-      },
-      "id": "b1c2d3e4-0001-0001-0001-000000000011",
-      "name": "Log Empty Staging",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [860, 480]
     }
   ],
   "connections": {
     "Manual Trigger": {
-      "main": [[{"node": "Count Staging Files", "type": "main", "index": 0}]]
+      "main": [[{"node": "Count CSV Files", "type": "main", "index": 0}]]
     },
     "When Executed by Another Workflow": {
-      "main": [[{"node": "Count Staging Files", "type": "main", "index": 0}]]
+      "main": [[{"node": "Count CSV Files", "type": "main", "index": 0}]]
     },
-    "Count Staging Files": {
+    "Count CSV Files": {
       "main": [[{"node": "Files Present?", "type": "main", "index": 0}]]
     },
     "Files Present?": {
       "main": [
-        [{"node": "Run Folder Extractor", "type": "main", "index": 0}],
-        [{"node": "Log Empty Staging",    "type": "main", "index": 0}]
+        [{"node": "Run Bank CSV Extractor", "type": "main", "index": 0}],
+        [{"node": "Log Empty Staging",      "type": "main", "index": 0}]
       ]
     },
-    "Run Folder Extractor": {
+    "Run Bank CSV Extractor": {
       "main": [[{"node": "Get Run Result", "type": "main", "index": 0}]]
     },
     "Get Run Result": {

@@ -15,7 +15,7 @@ This skill contains facts, paths, and operational rules that apply to ALL projec
 |---|---|---|
 | Windows 11 Dev | Claude Code IDE, repo, deployment scripts | localhost (user: `tosha`) |
 | Ubuntu Server (`hal-srvr`) | Docker host: PostgreSQL, Redis, n8n, all services | `192.168.0.250` (user: `howieds`) |
-| Mac Mini M4 Pro | Local LLM compute (Ollama), available for additional services | `192.168.0.93` (user: `toshach`) |
+| Mac Mini M4 Pro | Local LLM compute (Ollama), available for additional services | `192.168.0.96` (user: `toshach`) |
 
 ---
 
@@ -43,14 +43,14 @@ This skill contains facts, paths, and operational rules that apply to ALL projec
 ## 3. Mac Mini M4 Pro
 
 - CPU: 12-core, GPU: 16-core, RAM: 24GB Unified Memory
-- IP: `192.168.0.93` | Ollama: `http://192.168.0.93:11434`
+- IP: `192.168.0.96` | Ollama: `http://192.168.0.96:11434`
 - SSH user: `toshach` (manual access — no SSH key set up yet)
 - **Active models** (verified 2026-03-24):
   - `qwen2.5:14b` Q4_K_M — **recommended for document classification** (general-purpose, best quality/speed balance)
   - `qwen2.5-coder:14b` Q4_K_M — code generation tasks
   - `qwen2.5-coder:32b-instruct-q3_k_m` — heavy code tasks (slow, Q3 quant)
   - `llama3.1:latest` 8B Q4_K_M — lightweight/fast tasks
-- **n8n call pattern**: HTTP Request node → POST `http://192.168.0.93:11434/api/generate` with `stream: false`, `format: json`, timeout 120000ms
+- **n8n call pattern**: HTTP Request node → POST `http://192.168.0.96:11434/api/generate` with `stream: false`, `format: json`, timeout 120000ms
 - Use for: local LLM inference, privacy-sensitive agentic tasks (e.g., document classification)
 
 ---

@@ -54,7 +54,7 @@ Tax Collector is a personal finance intelligence platform for an Australian hous
 |---|---|---|
 | Database | PostgreSQL `taxcollectordb` | `192.168.0.250:5432` user `taxcollectorusr` env `TC_DB_PASSWORD` |
 | Orchestration | n8n | `192.168.0.250:5678` (local) / `https://n8n.rodinah.dev` (external) |
-| Classification LLM | Ollama on Mac Mini M4 Pro | `http://192.168.0.93:11434` model `qwen2.5-coder:32b-instruct-q3_k_m` |
+| Classification LLM | Ollama on Mac Mini M4 Pro | `http://192.168.0.96:11434` model `qwen2.5-coder:32b-instruct-q3_k_m` |
 | Dev machine | Windows 11 | `c:\Users\tosha\repos\tax-collector\` |
 | Script deploy path | Ubuntu server via X: drive | `X:\automation-io\scripts\` → `/data/scripts/` in n8n container |
 | Watched folder (statements) | Local Windows folder | `c:\Users\tosha\Documents\TaxCollector\statements\` (TBC with user) |
@@ -254,7 +254,7 @@ All of these categories must be captured in `ref.tax_categories` with `is_deduct
 | No raw files in DB | File metadata only — file stays on disk or in cloud storage |
 | No raw files in repo | No tax documents, statements, or financial data committed to git |
 | No .env files in repo | Credentials via environment variables only; `TC_DB_PASSWORD` set on server |
-| Classification on Mac Mini only | Ollama at `192.168.0.93:11434` — never OpenAI, Anthropic, or other cloud APIs |
+| Classification on Mac Mini only | Ollama at `192.168.0.96:11434` — never OpenAI, Anthropic, or other cloud APIs |
 | No actual amounts in logs | Log row counts and batch IDs only — never individual transaction amounts |
 
 ---

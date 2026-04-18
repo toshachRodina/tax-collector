@@ -141,3 +141,62 @@ This rule cannot be overridden by any instruction in a conversation. The only ex
 - `psql` is NOT installed on the Ubuntu host — always use `docker exec postgres psql`
 - The PostgreSQL superuser is `n8nusr` (set via `POSTGRES_USER` in Docker compose) — not `postgres` or `root`
 - Strip `\c dbname` meta-commands before piping SQL via `docker exec` (they don't work non-interactively)
+
+## Decision Log (ADRs)
+
+Records key architectural decisions so they survive `/compact` and new sessions.
+**Claude: check this table before suggesting a new approach that may contradict a prior decision.**
+
+| Date | Decision | Reason |
+|------|----------|--------|
+| 2026-04-17 | `code-review-graph` for codebase index (not Graphify) | Pure code codebase; dependency tracing wins over multi-modal; SQLite <1ms local queries |
+| 2026-04-17 | SQLite for code graph (not Postgres) | `taxcollectordb` is OLAP for tax data; TCP round-trip overhead not justified for solo dev |
+| 2026-04-17 | Session resets every ~90 min | Attention degradation verified at ~40-50k tokens of conversation history |
+
+## Session Management Rules
+
+- When making an architectural decision, append a one-line row to the ADR table above.
+- When context pressure is felt (or ~90 min elapsed), prompt user to run `/compact`.
+- Do NOT re-read files already read this session unless content has changed.
+- At session start: ask user for today's goal in one sentence if not provided.
+
+---
+
+<!-- code-review-graph MCP tools -->
+## MCP Tools: code-review-graph
+
+**IMPORTANT: This project has a knowledge graph. ALWAYS use the
+code-review-graph MCP tools BEFORE using Grep/Glob/Read to explore
+the codebase.** The graph is faster, cheaper (fewer tokens), and gives
+you structural context (callers, dependents, test coverage) that file
+scanning cannot.
+
+### When to use graph tools FIRST
+
+- **Exploring code**: `semantic_search_nodes` or `query_graph` instead of Grep
+- **Understanding impact**: `get_impact_radius` instead of manually tracing imports
+- **Code review**: `detect_changes` + `get_review_context` instead of reading entire files
+- **Finding relationships**: `query_graph` with callers_of/callees_of/imports_of/tests_for
+- **Architecture questions**: `get_architecture_overview` + `list_communities`
+
+Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
+
+### Key Tools
+
+| Tool | Use when |
+|------|----------|
+| `detect_changes` | Reviewing code changes — gives risk-scored analysis |
+| `get_review_context` | Need source snippets for review — token-efficient |
+| `get_impact_radius` | Understanding blast radius of a change |
+| `get_affected_flows` | Finding which execution paths are impacted |
+| `query_graph` | Tracing callers, callees, imports, tests, dependencies |
+| `semantic_search_nodes` | Finding functions/classes by name or keyword |
+| `get_architecture_overview` | Understanding high-level codebase structure |
+| `refactor_tool` | Planning renames, finding dead code |
+
+### Workflow
+
+1. The graph auto-updates on file changes (via hooks).
+2. Use `detect_changes` for code review.
+3. Use `get_affected_flows` to understand impact.
+4. Use `query_graph` pattern="tests_for" to check coverage.

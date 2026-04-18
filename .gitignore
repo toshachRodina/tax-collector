@@ -50,3 +50,5 @@ desktop.ini
 .idea/
 *.swp
 *.swo
+# Added by code-review-graph
+.code-review-graph/

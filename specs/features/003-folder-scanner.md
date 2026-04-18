@@ -1,4 +1,4 @@
-# Feature Spec 003 — Folder Scanner (Bindump Processor)
+# Feature Spec 003 — Folder Scanner (Staging Drop Zone)
 
 **Status**: Draft
 **Created**: 2026-03-24
@@ -9,7 +9,7 @@
 
 ## 1. Overview
 
-A pipeline that watches a drop-zone folder (`bindump`) on the Linux server, classifies each file dropped into it using a local LLM (Ollama on Mac Mini), files it into an organised folder structure by financial year and document type, records its metadata in the database, and — for utility bills and structured receipts — extracts line-item data into a flexible database table for longitudinal analysis.
+A pipeline that watches a drop-zone folder (`staging/`) on the Linux server, classifies each file dropped into it using a local LLM (Ollama on Mac Mini), files it into an organised folder structure by financial year and document type, records its metadata in the database, and — for utility bills and structured receipts — extracts line-item data into a flexible database table for longitudinal analysis.
 
 **Core rule: files are NEVER deleted. Every move is an archive operation.**
 
@@ -22,7 +22,7 @@ The X: drive on the Windows dev machine maps to `/data` on the Ubuntu server (`1
 | Windows path | Linux path | Purpose |
 |---|---|---|
 | `X:\data\tax-collector\` | `/data/tax-collector/` | Root |
-| `X:\data\tax-collector\bindump\` | `/data/tax-collector/bindump/` | Drop zone — user puts files here |
+| `X:\data\tax-collector\staging\` | `/data/tax-collector/staging/` | Drop zone — user puts files here |
 | `X:\data\tax-collector\YYYY-YYYY\` | `/data/tax-collector/YYYY-YYYY/` | Financial year archive |
 
 ---
@@ -84,7 +84,7 @@ This maps 1:1 to the `ref.tax_categories` table. The classification step determi
 
 ### 5.1 Classifier
 
-Use Ollama on the Mac Mini (`192.168.0.93:11434`). Model: `llama3.2` (text) or `llava` (vision, for image/scanned PDFs).
+Use Ollama on the Mac Mini (`192.168.0.96:11434`). Model: `llama3.2` (text) or `llava` (vision, for image/scanned PDFs).
 
 The classifier receives:
 - File name
@@ -182,9 +182,9 @@ NEVER overwrite a destination file.
 Steps:
 1. **Check destination exists.** Create target directory tree if missing.
 2. **Check for filename collision.** If `target/file.pdf` already exists, append a timestamp suffix: `file_20250324_143022.pdf`.
-3. **Move** (not copy — removes from bindump after successful move).
+3. **Move** (not copy — removes from staging after successful move).
 4. **Verify** destination file exists and size matches before considering success.
-5. If any step fails, leave the file in bindump and log the error. Do not retry automatically — flag for manual review.
+5. If any step fails, leave the file in staging and log the error. Do not retry automatically — flag for manual review.
 
 ---
 
@@ -304,9 +304,9 @@ Phase 1 (launch): classify and file only. Phase 2: extract line items.
 
 ```python
 # Pseudocode — full implementation in next session
-BINDUMP = Path("/data/tax-collector/bindump")
+BINDUMP = Path("/data/tax-collector/staging")
 ROOT = Path("/data/tax-collector")
-OLLAMA_URL = "http://192.168.0.93:11434/api/generate"
+OLLAMA_URL = "http://192.168.0.96:11434/api/generate"
 SUPPORTED_EXTS = {'.pdf', '.png', '.jpg', '.jpeg', '.tiff', '.docx'}
 
 def run():
@@ -341,7 +341,7 @@ def run():
 
 **Nodes**:
 1. **Schedule trigger** — run daily at 02:00 (or manual trigger)
-2. **SSH: check bindump** — `ls /data/tax-collector/bindump/ | wc -l`
+2. **SSH: check staging** — `ls /data/tax-collector/staging/ | wc -l`
 3. **IF: files exist** — skip if count = 0
 4. **SSH: run script** — `python3 /home/howieds/hub/tax-collector/prod/scripts/extract_folder_tax_docs.py`
 5. **DB: check results** — `SELECT rows_extracted, rows_loaded, status FROM ctl.process_log WHERE workflow_nme = 'TC_EXTRACT_FOLDER' ORDER BY started_at DESC LIMIT 1`
@@ -352,7 +352,7 @@ def run():
 
 ## 11. Acceptance Criteria
 
-- [ ] Files dropped in `bindump/` are classified within 60 seconds of the workflow trigger
+- [ ] Files dropped in `staging/` are classified within 60 seconds of the workflow trigger
 - [ ] Each file is moved to the correct `YYYY-YYYY/category/subfolder/` path
 - [ ] No file is ever deleted — only moved
 - [ ] Filename collisions are resolved with timestamp suffix (no overwrite)
@@ -402,6 +402,6 @@ COMMENT ON TABLE core.bill_details IS
 | # | Item | Impact |
 |---|---|---|
 | 1 | Confirm Ollama model to use for PDF classification (llama3.2 vs mistral) | Affects classification quality |
-| 2 | Confirm whether bindump should process `.docx` files or PDF/image only | Script scope |
+| 2 | Confirm whether staging should process `.docx` files or PDF/image only | Script scope |
 | 3 | Confirm Telegram bot token + chat ID for alerts | n8n workflow |
 | 4 | Phase 2 priority — when to activate bill line-item extraction | Backlog |

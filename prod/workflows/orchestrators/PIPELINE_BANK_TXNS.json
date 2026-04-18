@@ -1,0 +1,143 @@
+{
+  "name": "PIPELINE_BANK_TXNS",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -240,
+        -112
+      ],
+      "id": "680cf48d-0139-4365-80c0-ad058cc7f90b",
+      "name": "Manual Trigger"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -240,
+        48
+      ],
+      "id": "17e833fb-65f9-4682-a9e5-763c6fd1c9ca",
+      "name": "Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "Dat4ilzBc3bw1UIC",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/Dat4ilzBc3bw1UIC",
+          "cachedResultName": "EXTRACT_BANK_CSV"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -16,
+        -32
+      ],
+      "id": "3d006996-340f-4439-b5f5-764b42af0a37",
+      "name": "EXTRACT BANK TXNS",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "NJJXRGO0WmRaz1Qe",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/NJJXRGO0WmRaz1Qe",
+          "cachedResultName": "LOAD_CORE_BANK"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        192,
+        -32
+      ],
+      "id": "fceef8ca-d877-47ca-87ee-f966d8f92ba9",
+      "name": "LOAD CORE BANK TXNS",
+      "alwaysOutputData": true
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "EXTRACT BANK TXNS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "EXTRACT BANK TXNS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "EXTRACT BANK TXNS": {
+      "main": [
+        [
+          {
+            "node": "LOAD CORE BANK TXNS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "9958e7c7-d598-408c-ad55-2f4ad7e20e88",
+  "meta": {
+    "instanceId": "2368e69b5c080df17f325116bff5beaa65186ed8d19ea4dc43edb77db5ef060f"
+  },
+  "id": "mXzoitJfeUFpY2rM",
+  "tags": [
+    {
+      "updatedAt": "2026-03-25T22:00:22.976Z",
+      "createdAt": "2026-03-25T22:00:22.976Z",
+      "id": "ibOCWUSfke6h3B7y",
+      "name": "tax-collector"
+    }
+  ]
+}

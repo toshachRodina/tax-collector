@@ -115,7 +115,7 @@ n8n folder: `personal > tax-collector > wip`
 ## 8. Privacy Rules
 
 - **Never** send actual document content (PDFs, email bodies with financial data) to public cloud LLMs
-- Classification must run on **Mac Mini Ollama** (`http://192.168.0.93:11434`)
+- Classification must run on **Mac Mini Ollama** (`http://192.168.0.96:11434`)
 - Only metadata (document type, date, amount if extracted, sender) stored in PostgreSQL
 - Actual files stay on the local machine or synced cloud storage — never in this repo
 - DB contains: file paths/references, extracted metadata, classification labels — NOT file content

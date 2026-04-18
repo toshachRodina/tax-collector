@@ -2,8 +2,8 @@
 
 > Live handoff document. Update before ending any session or switching tools.
 
-**Last updated**: 2026-04-07 (session 16 — checklist + folder scanner + few-shot all live; 12 staging files landed)
-**Current mode**: All pipelines live — next: add EXTRACT_FOLDER to RUN_DAILY_TC, start Spec 003 bank CSV ingestion
+**Last updated**: 2026-04-18 (session 17 — bank pipeline refined; orchestration confirmed fully live)
+**Current mode**: All pipelines live and running daily at 18:00. Bank CSV pipeline active. Schema refinements pending DB deploy.
 **Active branch**: master
 
 ---
@@ -75,18 +75,28 @@
 - Filed files at correct network-visible path: X:\data\tax-collector\2025-2026\...
 
 ### What's next (priority order)
-1. **[IMMEDIATE] Add EXTRACT_FOLDER to RUN_DAILY_TC** — user adds one executeWorkflow node in n8n UI (cannot be done by AI — parent orchestrator rule). Workflow ID: `kvxTsvvnjeeR4Y1S`.
-2. **Commit session work** — DDL 007-009, scripts, workflows, specs all untracked/modified.
-3. **Bank CSV ingestion (Spec TBD)** — CSVs in staging (NABSavings1, NABVISA1, etc.) are skipped by folder scanner. Separate pipeline needed.
-4. **Spec 003 folder scanner** — update spec to replace `bindump` → `staging` throughout.
-5. **Granular bill detail capture** — extend Ollama prompt to extract line_items from utility bills for solar battery ROI analysis.
-6. **few-shot loop confirmed working** — LOAD_CORE_TAX_DOCS now classifies unclassified Gmail landing records before merge; folder scanner classifies at extract time. No further action needed unless classification quality issues surface.
+
+1. **[IMMEDIATE — USER] Deploy schema changes to taxcollectordb in DBeaver:**
+   - Run `ALTER TABLE core.bank_transactions ADD COLUMN IF NOT EXISTS has_matching_document BOOLEAN NOT NULL DEFAULT FALSE;`
+   - Run new mart views from `prod/schema/DDL/010_bank_transactions.sql` (section 4 and 5 — `vw_bank_interest_income` and `vw_missing_receipt_indicators`)
+   - Then deploy `sp_merge_bank_transactions.sql` via AI SSH (`docker exec postgres psql`)
+   - Then push updated `LOAD_CORE_BANK.json` to n8n via `bash maintenance/scripts/push-workflow.sh prod/workflows/LOAD_CORE_BANK.json`
+   - Then deploy updated `extract_bank_csv.py` via `bash maintenance/scripts/deploy-scripts.bat`
+
+2. **[IMMEDIATE — USER] Deploy updated extract_bank_csv.py** — `bash maintenance/scripts/deploy-scripts.bat`
+
+3. **Add Metabase dashboard cards** (after DB deploy):
+   - "Bank Interest Income FY2025" — sum from `mart.vw_bank_interest_income` on FY Summary dashboard
+   - "Missing Receipt Indicators" — table from `mart.vw_missing_receipt_indicators` on FY Summary dashboard
+
+4. **Smoke test bank pipeline** — drop a NAB CSV in staging, trigger PIPELINE_BANK_TXNS manually, verify `has_matching_document` populated and `vw_missing_receipt_indicators` shows gaps
 
 ### Open items (lower priority)
 - Bendigo Bank CSV columns — confirm when next statement available
 - Share broker — CommSec CSV format TBD
 - Super fund provider — TBD
 - Review UI (Phase 2) — Telegram bot or simple web page for mobile approval
+- Line-item extraction from utility bills — V2 (solar battery ROI analysis)
 
 ---
 
@@ -98,8 +108,8 @@
 - **DB superuser**: `n8nusr` (Docker `POSTGRES_USER`) — not `postgres` or `root`
 - **DB access**: AI uses `docker exec postgres psql` over SSH (key `~/.ssh/trade_vantage_agent`). User uses DBeaver on Windows dev machine.
 - **HARD RULE**: Never autonomously run DROP / TRUNCATE / bulk DELETE. Provide SQL, user runs in DBeaver.
-- **Privacy rule**: Never send document content to cloud LLMs — Ollama on Mac Mini (`192.168.0.93:11434`) only
-- **LLM model**: `qwen2.5:14b` Q4_K_M on Mac Mini M4 Pro (`192.168.0.93:11434`). Available models: qwen2.5:14b, qwen2.5-coder:14b, qwen2.5-coder:32b-instruct-q3_k_m, llama3.1:latest. **qwen2.5:32b does NOT exist** — do not use.
+- **Privacy rule**: Never send document content to cloud LLMs — Ollama on Mac Mini (`192.168.0.96:11434`) only
+- **LLM model**: `qwen2.5:14b` Q4_K_M on Mac Mini M4 Pro (`192.168.0.96:11434`). Available models: qwen2.5:14b, qwen2.5-coder:14b, qwen2.5-coder:32b-instruct-q3_k_m, llama3.1:latest. **qwen2.5:32b does NOT exist** — do not use.
 - **Alerting**: Email to `toshach@gmail.com` via Gmail OAuth2 cred ID `WcOe7o1be8G2TzJ4`. No Telegram/Signal.
 - **Gmail OAuth**: App "In production", tokens long-lived. Always reconnect via `n8n.rodinah.dev` (not local IP).
 - **Script deploy path**: `X:\automation-io\tax-collector\scripts\` → `/mnt/disk2/automation-io/tax-collector/scripts/` → n8n sees as `/data/tax-collector/scripts/`. Use `bash maintenance/scripts/deploy-scripts.bat` (Windows) to push.
@@ -122,6 +132,33 @@
 ---
 
 ## Session Log
+
+### 2026-04-18 (session 17) — Bank pipeline refined; orchestration confirmed live; Redash vs Metabase decided
+
+**What was done:**
+- **Confirmed orchestration fully live**: `RUN_DAILY_TC` (18:00 daily, ID `KrdjQ1fohP4WySo7`) calls `PIPELINE_EXRACTS` → `NOTIFY_REVIEW` → `PIPELINE_BANK_TXNS`. EXTRACT_FOLDER already wired — no manual action needed (CONTEXT.md was stale).
+- **Confirmed bank pipeline live**: `EXTRACT_BANK_CSV` (ID `Dat4ilzBc3bw1UIC`) + `LOAD_CORE_BANK` (ID `NJJXRGO0WmRaz1Qe`) running. DDL `010_bank_transactions.sql` deployed and tables populated.
+- **Simplified bank transaction categorisation logic**: Addressed user's valid question — bank transactions are NOT a deductions list. The pipeline's two legitimate purposes are: (1) bank interest income declaration (ATO requirement) and (2) gap detection (flagged categories with no matching document in core.tax_documents).
+- **Added `has_matching_document` column** to `core.bank_transactions` schema (via `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` in DDL — idempotent). Pending DB deploy.
+- **Added two new mart views**: `mart.vw_bank_interest_income` (interest rows for ATO declaration) and `mart.vw_missing_receipt_indicators` (flagged categories with no matching document). Pending DB deploy.
+- **Updated `LOAD_CORE_BANK.json`**: Merge SQL now sets `has_matching_document` via EXISTS cross-check against `core.tax_documents`. Interest rows auto-CONFIRMED. Get Counts updated to report `total_interest_rows` and `total_missing_receipts`. Pending n8n push.
+- **Written `sp_merge_bank_transactions.sql`**: Full stored procedure alternative to inline SQL — promotes landing → core with all classification logic. Also re-evaluates `has_matching_document` for existing NEEDS_REVIEW rows on each run (so gaps close as documents arrive). Pending DB deploy.
+- **Updated `extract_bank_csv.py`**: Renamed `DEDUCTIBLE_NAB_CATEGORIES` → `FLAGGED_NAB_CATEGORIES` with corrected purpose comments. Backwards-compatible alias retained. Pending script deploy.
+- **Fixed spec 003**: All `bindump` references replaced with `staging`. Title updated.
+- **Redash vs Metabase research completed**: Decision = stay with Metabase. Redash is community-led only (Databricks dropped it), requires 3+ Docker services vs 1, and has less native drill-through. Metabase wins for solo home server use.
+
+**Key decisions:**
+- Bank transactions are GAP INDICATORS and ATO income, not a deductions list. The receipt IS the deductible item.
+- `has_matching_document` cross-checks supplier name + 60-day date window — fuzzy but sufficient for gap detection.
+- Interest rows auto-CONFIRMED (no human review needed — ATO income is deterministic).
+- Metabase stays — no migration to Redash warranted.
+
+**Pending user actions (deploy sequence):**
+1. Run `ALTER TABLE + mart views` SQL in DBeaver (from DDL 010 sections 4-5)
+2. AI deploys `sp_merge_bank_transactions.sql` via SSH once user confirms step 1
+3. AI pushes updated `LOAD_CORE_BANK.json` to n8n
+4. AI deploys updated `extract_bank_csv.py` via `bash maintenance/scripts/deploy-scripts.bat`
+5. Smoke test: drop NAB CSV, trigger pipeline, verify `has_matching_document` + new mart views
 
 ### 2026-04-07 (session 16) — Tax checklist, folder scanner, few-shot, Metabase all live
 

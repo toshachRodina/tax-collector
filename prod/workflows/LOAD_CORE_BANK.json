@@ -1,0 +1,159 @@
+{
+  "_n8nId": "NJJXRGO0WmRaz1Qe",
+  "name": "LOAD_CORE_BANK",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "lcb00001-0001-0001-0001-000000000001",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 480]
+    },
+    {
+      "parameters": { "inputSource": "passthrough" },
+      "id": "lcb00001-0001-0001-0001-000000000002",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO ctl.process_log (workflow_nme, script_nme, status, started_at)\nVALUES ('TC_LOAD_CORE_BANK', 'LOAD_CORE_BANK', 'STARTED', NOW())\nRETURNING batch_id;",
+        "options": {}
+      },
+      "id": "lcb00001-0001-0001-0001-000000000003",
+      "name": "Start Batch",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [460, 380],
+      "credentials": { "postgres": { "id": "GhZL6n0TTt2R9eJ7", "name": "Tax Collector DB" } },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const batchId = $input.first().json.batch_id;\nreturn [{ json: { batch_id: batchId } }];"
+      },
+      "id": "lcb00001-0001-0001-0001-000000000004",
+      "name": "Set Batch ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 380]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO core.bank_transactions (\n    account_number, account_label, txn_date, fy_year,\n    amount, transaction_type, transaction_details, merchant_name,\n    nab_category, tax_category_id, is_potentially_deductible,\n    deductible_notes, has_matching_document, review_status, row_hash, batch_id\n)\nSELECT\n    l.account_number,\n    CASE\n        WHEN l.source_file ILIKE '%VISA%'     THEN 'VISA'\n        WHEN l.source_file ILIKE '%Savings1%' THEN 'Savings1'\n        WHEN l.source_file ILIKE '%Savings2%' THEN 'Savings2'\n        ELSE 'Unknown'\n    END,\n    l.txn_date,\n    f.fy_year,\n    l.amount,\n    l.transaction_type,\n    l.transaction_details,\n    l.merchant_name,\n    l.nab_category,\n    CASE l.nab_category\n        WHEN 'Subscriptions'       THEN (SELECT category_id FROM ref.tax_categories WHERE category_nme = 'Software & Subscriptions' LIMIT 1)\n        WHEN 'Education'           THEN (SELECT category_id FROM ref.tax_categories WHERE category_nme = 'Professional Development' LIMIT 1)\n        WHEN 'Tax & Accountant'    THEN (SELECT category_id FROM ref.tax_categories WHERE category_nme = 'Tax Agent Fees' LIMIT 1)\n        WHEN 'Donations'           THEN (SELECT category_id FROM ref.tax_categories WHERE category_nme = 'Donations' LIMIT 1)\n        WHEN 'Transport'           THEN (SELECT category_id FROM ref.tax_categories WHERE category_nme = 'Motor Vehicle / Logbook' LIMIT 1)\n        WHEN 'Electronic Shopping' THEN (SELECT category_id FROM ref.tax_categories WHERE category_nme = 'Technology Equipment' LIMIT 1)\n        WHEN 'Health & Medical'    THEN (SELECT category_id FROM ref.tax_categories WHERE category_nme = 'Private Health Insurance' LIMIT 1)\n        ELSE NULL\n    END,\n    CASE l.nab_category\n        WHEN 'Subscriptions'       THEN TRUE\n        WHEN 'Education'           THEN TRUE\n        WHEN 'Tax & Accountant'    THEN TRUE\n        WHEN 'Donations'           THEN TRUE\n        WHEN 'Business Services'   THEN TRUE\n        WHEN 'Transport'           THEN TRUE\n        WHEN 'Electronic Shopping' THEN TRUE\n        WHEN 'Health & Medical'    THEN TRUE\n        ELSE FALSE\n    END,\n    CASE l.nab_category\n        WHEN 'Subscriptions'       THEN 'Check for matching receipt in documents'\n        WHEN 'Education'           THEN 'Check for receipt or enrolment letter in documents'\n        WHEN 'Tax & Accountant'    THEN 'Check for invoice in documents'\n        WHEN 'Donations'           THEN 'Check for receipt in documents'\n        WHEN 'Business Services'   THEN 'Check for invoice in documents'\n        WHEN 'Transport'           THEN 'Check for logbook or receipt in documents'\n        WHEN 'Electronic Shopping' THEN 'Check for matching receipt in documents'\n        WHEN 'Health & Medical'    THEN 'Check for annual statement in documents'\n        WHEN 'Interest'            THEN 'Declare as ATO income — no receipt expected'\n        ELSE NULL\n    END,\n    -- has_matching_document: TRUE if a tax document exists for the same supplier within 60 days\n    EXISTS (\n        SELECT 1 FROM core.tax_documents d\n        WHERE d.fy_year = f.fy_year\n          AND (\n              (l.merchant_name IS NOT NULL AND d.supplier_name ILIKE '%' || l.merchant_name || '%')\n           OR (l.transaction_details IS NOT NULL AND d.supplier_name ILIKE '%' || split_part(l.transaction_details, ' ', 1) || '%')\n          )\n          AND ABS(EXTRACT(DAY FROM (d.document_date - l.txn_date))) <= 60\n    ),\n    -- review_status: Interest is auto-confirmed (income to declare); flagged categories need review\n    CASE\n        WHEN l.nab_category = 'Interest' THEN 'CONFIRMED'\n        WHEN l.nab_category IN (\n            'Subscriptions','Education','Tax & Accountant','Donations',\n            'Business Services','Transport','Electronic Shopping','Health & Medical'\n        ) THEN 'NEEDS_REVIEW'\n        ELSE 'PENDING'\n    END,\n    l.row_hash,\n    {{ $json.batch_id }}\nFROM landing.bank_transactions l\nLEFT JOIN ref.fy_periods f\n    ON l.txn_date BETWEEN f.start_date AND f.end_date\nLEFT JOIN core.bank_transactions c\n    ON l.row_hash = c.row_hash\nWHERE c.row_hash IS NULL\nON CONFLICT (row_hash) DO NOTHING;",
+        "options": {}
+      },
+      "id": "lcb00001-0001-0001-0001-000000000005",
+      "name": "Merge to Core",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [860, 380],
+      "credentials": { "postgres": { "id": "GhZL6n0TTt2R9eJ7", "name": "Tax Collector DB" } },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n    (SELECT COUNT(*) FROM core.bank_transactions WHERE batch_id = {{ $('Set Batch ID').first().json.batch_id }}) AS rows_loaded,\n    (SELECT COUNT(*) FROM landing.bank_transactions) AS rows_in_landing,\n    (SELECT COUNT(*) FROM core.bank_transactions) AS total_in_core,\n    (SELECT COUNT(*) FROM core.bank_transactions WHERE nab_category = 'Interest') AS total_interest_rows,\n    (SELECT COUNT(*) FROM core.bank_transactions WHERE has_matching_document = FALSE AND nab_category IN ('Subscriptions','Education','Tax & Accountant','Donations','Business Services','Transport','Electronic Shopping','Health & Medical')) AS total_missing_receipts;",
+        "options": {}
+      },
+      "id": "lcb00001-0001-0001-0001-000000000006",
+      "name": "Get Counts",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1060, 380],
+      "credentials": { "postgres": { "id": "GhZL6n0TTt2R9eJ7", "name": "Tax Collector DB" } },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE ctl.process_log\nSET status = 'SUCCESS',\n    rows_extracted = {{ $json.rows_in_landing }},\n    rows_loaded    = {{ $json.rows_loaded }},\n    rows_skipped   = {{ $json.rows_in_landing }} - {{ $json.rows_loaded }},\n    completed_at   = NOW()\nWHERE batch_id = {{ $('Set Batch ID').first().json.batch_id }};",
+        "options": {}
+      },
+      "id": "lcb00001-0001-0001-0001-000000000007",
+      "name": "Complete Batch",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1260, 380],
+      "credentials": { "postgres": { "id": "GhZL6n0TTt2R9eJ7", "name": "Tax Collector DB" } },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE ctl.process_log\nSET status = 'FAILED', error_msg = 'Workflow error — check n8n execution log', completed_at = NOW()\nWHERE batch_id = {{ $('Set Batch ID').first().json.batch_id }};",
+        "options": {}
+      },
+      "id": "lcb00001-0001-0001-0001-000000000008",
+      "name": "Fail Batch",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1260, 560],
+      "credentials": { "postgres": { "id": "GhZL6n0TTt2R9eJ7", "name": "Tax Collector DB" } },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "sendTo": "toshach@gmail.com",
+        "subject": "TC_LOAD_CORE_BANK FAILED",
+        "message": "=<p>The <strong>LOAD_CORE_BANK</strong> workflow failed.</p><p>Check <code>ctl.process_log</code> for batch {{ $('Set Batch ID').first().json.batch_id }}.</p>",
+        "options": { "appendAttribution": false, "mimeType": "html" }
+      },
+      "id": "lcb00001-0001-0001-0001-000000000009",
+      "name": "Send Error Alert",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1460, 560],
+      "credentials": { "gmailOAuth2": { "id": "WcOe7o1be8G2TzJ4", "name": "Gmail account" } }
+    },
+    {
+      "parameters": { "errorMessage": "LOAD_CORE_BANK failed — see error alert email" },
+      "id": "lcb00001-0001-0001-0001-000000000010",
+      "name": "Stop And Error",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [1660, 560]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [[{"node": "Start Batch", "type": "main", "index": 0}]]
+    },
+    "When Executed by Another Workflow": {
+      "main": [[{"node": "Start Batch", "type": "main", "index": 0}]]
+    },
+    "Start Batch": {
+      "main":  [[{"node": "Set Batch ID",  "type": "main", "index": 0}]],
+      "error": [[{"node": "Send Error Alert","type": "main", "index": 0}]]
+    },
+    "Set Batch ID": {
+      "main": [[{"node": "Merge to Core", "type": "main", "index": 0}]]
+    },
+    "Merge to Core": {
+      "main":  [[{"node": "Get Counts",     "type": "main", "index": 0}]],
+      "error": [[{"node": "Fail Batch",     "type": "main", "index": 0}]]
+    },
+    "Get Counts": {
+      "main":  [[{"node": "Complete Batch", "type": "main", "index": 0}]],
+      "error": [[{"node": "Fail Batch",     "type": "main", "index": 0}]]
+    },
+    "Complete Batch": {
+      "error": [[{"node": "Fail Batch", "type": "main", "index": 0}]]
+    },
+    "Fail Batch": {
+      "main": [[{"node": "Send Error Alert", "type": "main", "index": 0}]]
+    },
+    "Send Error Alert": {
+      "main": [[{"node": "Stop And Error", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {"executionOrder": "v1"},
+  "tags": [{"name": "tax-collector"}]
+}
