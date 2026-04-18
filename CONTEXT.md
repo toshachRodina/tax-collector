@@ -76,16 +76,7 @@
 
 ### What's next (priority order)
 
-1. **[IMMEDIATE — USER] Deploy schema changes to taxcollectordb in DBeaver:**
-   - Run `ALTER TABLE core.bank_transactions ADD COLUMN IF NOT EXISTS has_matching_document BOOLEAN NOT NULL DEFAULT FALSE;`
-   - Run new mart views from `prod/schema/DDL/010_bank_transactions.sql` (section 4 and 5 — `vw_bank_interest_income` and `vw_missing_receipt_indicators`)
-   - Then deploy `sp_merge_bank_transactions.sql` via AI SSH (`docker exec postgres psql`)
-   - Then push updated `LOAD_CORE_BANK.json` to n8n via `bash maintenance/scripts/push-workflow.sh prod/workflows/LOAD_CORE_BANK.json`
-   - Then deploy updated `extract_bank_csv.py` via `bash maintenance/scripts/deploy-scripts.bat`
-
-2. **[IMMEDIATE — USER] Deploy updated extract_bank_csv.py** — `bash maintenance/scripts/deploy-scripts.bat`
-
-3. **Add Metabase dashboard cards** (after DB deploy):
+1. **Add Metabase dashboard cards**:
    - "Bank Interest Income FY2025" — sum from `mart.vw_bank_interest_income` on FY Summary dashboard
    - "Missing Receipt Indicators" — table from `mart.vw_missing_receipt_indicators` on FY Summary dashboard
 
