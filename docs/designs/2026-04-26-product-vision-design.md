@@ -43,7 +43,7 @@ Zero manual hunting. Zero "did I get that receipt?" anxiety. The system did it.
 
 ### The Problem
 
-The ATO WFH deduction (fixed rate 67c/hour or actual cost method) requires evidence of days/hours worked from home. No log was kept for FY2025. The work laptop is a different machine — not this Windows dev machine. Standard router logs are not available (consumer ISP router, no log access).
+The ATO WFH deduction (fixed rate 70c/hour, confirmed by tax agent 2026-04-26) requires evidence of days/hours worked from home. No log was kept for FY2025. The work laptop is a different machine — not this Windows dev machine. Standard router logs are not available (consumer ISP router, no log access).
 
 **ATO compliance note:** The fixed-rate method requires a representative record of hours worked from home — typically a diary or log covering at least 4 representative weeks. The `ctl.wfh_log` table plus a Metabase CSV export constitutes this record. The user must review and confirm the log is accurate before ATO submission. The log itself, with source and confidence columns, provides the audit trail.
 
@@ -235,13 +235,13 @@ The view lives in `ctl` schema (not `mart`) to avoid cross-schema referencing fr
 -- ctl.vw_wfh_deduction
 -- Lives in ctl (not mart) because it references ctl.wfh_log directly.
 -- Metabase is configured to query ctl schema directly for this dashboard tab.
--- ATO fixed rate: 67 cents per hour worked from home (FY2025 onwards)
+-- ATO fixed rate: 70 cents per hour worked from home (confirmed by tax agent 2026-04-26)
 CREATE OR REPLACE VIEW ctl.vw_wfh_deduction AS
 SELECT
     fy_year,
     COUNT(*) FILTER (WHERE is_wfh = TRUE)  AS wfh_days,
     SUM(hours_worked) FILTER (WHERE is_wfh = TRUE) AS total_hours,
-    ROUND(SUM(hours_worked) FILTER (WHERE is_wfh = TRUE) * 0.67, 2) AS fixed_rate_deduction_aud,
+    ROUND(SUM(hours_worked) FILTER (WHERE is_wfh = TRUE) * 0.70, 2) AS fixed_rate_deduction_aud,
     -- Actual cost method: not yet specced. Remove NULL stub once approach is chosen.
     -- (deferred until accountant advises on method preference)
 FROM ctl.wfh_log
@@ -327,10 +327,10 @@ Tab 4 — Summary (accountant handoff)
 
 | # | Item | Blocks |
 |---|---|---|
-| 1 | **Event Log retention check** — run `Get-WinEvent -FilterHashtable @{LogName='System';Id=6005;StartTime='2024-07-01'} -MaxEvents 1 -ErrorAction SilentlyContinue` to see if July 2024 events still exist. If zero results, log may be overwritten — supplement with manual CSV entries. | Phase 1 |
+| 1 | **Event Log retention — CONFIRMED OVERWRITTEN** (2026-04-26). Oldest System event is 2026-02-07. No FY2025 data in the log. Phase 1 script will return 0 rows. **FY2025 WFH log must be built manually via CSV** — use `override_note` to document each day's source. Bank commute flag is now the primary cross-check signal. | Phase 1 |
 | 2 | **Security log access** — retrospective script queries Event 4624 (requires admin). Run `Get-WinEvent -LogName Security -MaxEvents 1` in an admin PowerShell. If it fails with access denied, script falls back to System 6005 only (startup events). | Phase 1 |
 | 3 | **Commute transaction identifiers** — what exact string does Opal/Myki show as in `transaction_details` column? Run `SELECT DISTINCT transaction_details FROM landing.bank_transactions WHERE nab_category = 'Transport' LIMIT 20` in DBeaver to see real values before writing the commute flag logic. | Phase 4 |
-| 4 | **ATO deduction method** — fixed rate (67c/hr, simpler, needs hours log) or actual cost (potentially higher, needs utility bill proration calc)? Default: fixed rate. Revisit with accountant before July submission. | Phase 4 |
+| 4 | **ATO deduction method — CONFIRMED** (2026-04-26). Tax agent confirmed: Fixed Rate Method @ **70c/hr**. No further accountant decision needed. | Phase 4 |
 | 5 | **Metabase edition** — Community or Pro? Check at `192.168.0.250/admin/settings` → General → Edition. Community = no write-back actions (use DBeaver for "mark reviewed"). Pro = Actions feature available. | Phase 6 |
 
 **Closed:** Network scan via work laptop MAC — ruled out. Event Log approach is sufficient and simpler.

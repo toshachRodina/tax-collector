@@ -44,7 +44,7 @@ A privacy-first, pipeline-first personal tax intelligence system. All classifica
 | 9 | Accountant HTML report + email | 45 min | June |
 
 **Target: Phases 1-3 this week. Phases 4-5 + 10 by May 15. Phases 6-9 in June. Ready for July 1.**
-**Decision gate May 15:** Confirm Metabase edition + ATO deduction method with accountant (by June 1).
+**Decision gate May 15:** Confirm Metabase edition. ATO method already confirmed (70c/hr fixed rate, tax agent 2026-04-26).
 
 ## Deferred to TODOS.md
 - Natural language query interface
@@ -55,5 +55,5 @@ A privacy-first, pipeline-first personal tax intelligence system. All classifica
 1. **WFH detection:** Windows Event Log retrospective (FY2025) + Task Scheduler (FY2026). CSV is source of truth. Bank commute transactions as secondary verification.
 2. **Review UI:** Metabase dashboards, not custom frontend. Confirm edition (Community vs Pro) before Phase 6.
 3. **Schema layering:** `ctl.vw_wfh_deduction` lives in `ctl` (not `mart`) — Metabase queries `ctl` directly for WFH tab.
-4. **ATO method:** Default to fixed rate (67c/hr). **Confirm with accountant by June 1.** If actual cost is chosen, `ctl.vw_wfh_deduction` and Phase 4 need rework (utility bill proration calc).
+4. **ATO method:** Fixed rate **70c/hr** (confirmed by tax agent 2026-04-26). If actual cost is chosen, `ctl.vw_wfh_deduction` and Phase 4 need rework (utility bill proration calc).
 5. **Metabase edition decision gate:** Confirm Community vs Pro by May 15. If Community: "Mark as reviewed" in Tab 1 requires DBeaver manual update. If Pro: Actions feature available.
