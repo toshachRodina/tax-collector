@@ -31,14 +31,22 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 DB_CONFIG = {
-    "host": "192.168.0.250",
+    # Hardcoded, this writes to the LAPTOP and the run still reports progress.
+    # Default unchanged so behaviour is identical unless DB_HOST is set — and it
+    # is set to the `postgres` network alias on hal-srvr2.
+    "host": os.environ.get("DB_HOST", "192.168.0.250"),
     "port": 5432,
     "database": "taxcollectordb",
     "user": "taxcollectorusr",
 }
 
 OLLAMA_URL = "http://192.168.0.96:11434/api/generate"
-OLLAMA_MODEL = "qwen2.5:14b"
+# qwen3:30b-a3b is the lab standard local model [D-013]. It is a REASONING model:
+# Ollama returns chain-of-thought in a separate `thinking` field while still
+# billing it against num_predict. Under format:"json" that leaves `response`
+# empty and EVERY parse fails — while the script exits 0. Hence "think": false
+# and a capped num_predict on the call below. See [D-014]; not optional.
+OLLAMA_MODEL = "qwen3:30b-a3b"
 OLLAMA_TIMEOUT = 180
 OLLAMA_CTX = 32768          # 32K context window — fits ~24K chars of document text
 OLLAMA_MAX_TEXT_CHARS = 24000  # ~6K tokens of document text at conservative 4 chars/token
@@ -250,7 +258,11 @@ def classify_with_ollama(text, few_shot_examples=None):
         "prompt": prompt,
         "stream": False,
         "format": "json",
-        "options": {"num_ctx": OLLAMA_CTX},
+        # think:false — see the OLLAMA_MODEL note. num_predict caps the reply: a
+        # classification JSON is small, and uncapped one reasoning prompt once ran
+        # to 45,000+ tokens and blew the timeout.
+        "think": False,
+        "options": {"num_ctx": OLLAMA_CTX, "num_predict": 1024},
     }
 
     try:

@@ -42,7 +42,10 @@ CONFIG_DIR     = Path.home() / "tax-collector" / "config"
 TOKEN_PATH     = CONFIG_DIR / "token.json"
 CREDENTIALS_PATH = CONFIG_DIR / "credentials.json"
 
-DB_HOST = "192.168.0.250"
+# Hardcoded, this writes to the LAPTOP and the run still exits 0. Default is
+# unchanged, so behaviour is identical unless DB_HOST is set — and it is set
+# to the `postgres` network alias on hal-srvr2.
+DB_HOST = os.environ.get("DB_HOST", "192.168.0.250")
 DB_PORT = 5432
 DB_NAME = "taxcollectordb"
 DB_USER = "taxcollectorusr"

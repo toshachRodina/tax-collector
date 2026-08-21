@@ -44,11 +44,19 @@ STAGING_DIR    = Path(os.environ.get("TC_DOCS_ROOT", "/data/tc-docs")) / "stagin
 ARCHIVE_ROOT   = Path(os.environ.get("TC_DOCS_ROOT", "/data/tc-docs"))
 
 OLLAMA_URL     = "http://192.168.0.96:11434/api/generate"
-OLLAMA_MODEL   = "qwen2.5:14b"
+# qwen3:30b-a3b is the lab standard local model [D-013]. It is a REASONING model:
+# Ollama returns chain-of-thought in a separate `thinking` field while still
+# billing it against num_predict. Under format:"json" that leaves `response`
+# empty and EVERY parse fails — while the script exits 0. Hence "think": false
+# and a capped num_predict on the call below. See [D-014]; not optional.
+OLLAMA_MODEL = "qwen3:30b-a3b"
 
 SUPPORTED_EXTS = {".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".docx"}
 
-DB_HOST = "192.168.0.250"
+# Hardcoded, this writes to the LAPTOP and the run still exits 0. Default is
+# unchanged, so behaviour is identical unless DB_HOST is set — and it is set
+# to the `postgres` network alias on hal-srvr2.
+DB_HOST = os.environ.get("DB_HOST", "192.168.0.250")
 DB_PORT = 5432
 DB_NAME = "taxcollectordb"
 DB_USER = "taxcollectorusr"
@@ -394,7 +402,9 @@ Respond ONLY with valid JSON:
     try:
         response = requests.post(
             OLLAMA_URL,
-            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
+            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False,
+                  # see the OLLAMA_MODEL note — [D-014], not optional
+                  "think": False, "options": {"num_predict": 1024}},
             timeout=120,
         )
         response.raise_for_status()
