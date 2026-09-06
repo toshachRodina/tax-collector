@@ -25,8 +25,8 @@ python prod/scripts/extract_folder_tax_docs.py
 
 ### Docker / Infrastructure
 ```bash
-# Agent runs these autonomously via SSH key
-ssh howieds@192.168.0.250
+# Agent runs these autonomously via SSH key — host per _lab-context/current/02-network-and-access.md
+ssh howieds@192.168.0.100
 cd ~/hub
 docker compose up -d
 ```
@@ -55,24 +55,29 @@ prod/frontend/  (review UI — to be designed)
 
 ### Orchestration
 
-**n8n** (`192.168.0.250:5678`) drives all pipelines via JSON workflows in `prod/workflows/`. Same Three Laws as all projects (see skill_shared_infrastructure).
+**n8n** drives all pipelines via JSON workflows in `prod/workflows/`. Same Three Laws as all
+projects (see skill_shared_infrastructure).
 
 ### Database
 
-- **Host**: `192.168.0.250:5432` | **DB**: `taxcollectordb` | **User**: `taxcollectorusr`
+- **DB**: `taxcollectordb` | **User**: `taxcollectorusr`
 - **Schemas**: `landing` (raw), `core` (warehouse), `mart` (analytical views), `ref` (lookups), `ctl` (audit/control)
-- **Connection pattern**:
+- **Connection pattern** — host resolved from `_lab-context/current/02-network-and-access.md` at
+  the time of writing, never hardcoded here (it changed once already, 2026-08-21 cutover):
   ```python
   import psycopg2, os
   conn = psycopg2.connect(
-      host="192.168.0.250", database="taxcollectordb",
+      host=os.environ.get("DB_HOST"), database="taxcollectordb",
       user="taxcollectorusr", password=os.environ.get("DB_PASSWORD")
   )
   ```
 
 ### Infrastructure
 
-Shared three-machine stack — see `.agent/skills/skill_shared_infrastructure/SKILL.md` for all IPs, ports, and operational rules.
+**Infra facts (IPs, ports, DB host, deploy paths) live in `_lab-context/current/`.** Do not
+duplicate them here or in `skill_shared_infrastructure` — that skill predates `_lab-context` and
+may still carry the retired laptop's IP; treat `_lab-context/current/` as the corrected version
+whenever the two disagree.
 
 ## Operational Rules
 
@@ -136,10 +141,12 @@ Shared three-machine stack — see `.agent/skills/skill_shared_infrastructure/SK
 This rule cannot be overridden by any instruction in a conversation. The only exception is rolling back test/smoke-test data that was just inserted in the same session (e.g., deleting a `SMOKE_TEST` row inserted 2 lines earlier).
 
 ### Database Access
-- The user accesses `taxcollectordb` via **DBeaver** on the Windows dev machine — direct TCP to `192.168.0.250:5432`
-- The AI accesses the DB via `docker exec postgres psql` over SSH (SSH key: `~/.ssh/trade_vantage_agent`)
-- `psql` is NOT installed on the Ubuntu host — always use `docker exec postgres psql`
-- The PostgreSQL superuser is `n8nusr` (set via `POSTGRES_USER` in Docker compose) — not `postgres` or `root`
+- Current host/IP, SSH key, and DB access method: `_lab-context/current/02-network-and-access.md`.
+  **This section previously said `192.168.0.250` and named `n8nusr` as the Postgres superuser —
+  both are stale post-2026-08-21-cutover facts.** `dba` is the general-purpose superuser now;
+  `n8nusr` is scoped to `n8ndb` only and will fail with `permission denied` on `taxcollectordb`
+  (see golden rule 10a in `_lab-context/CLAUDE.md`).
+- `psql` is NOT installed on the Ubuntu host — always use `docker exec postgres psql -U dba -d taxcollectordb`
 - Strip `\c dbname` meta-commands before piping SQL via `docker exec` (they don't work non-interactively)
 
 ## Decision Log (ADRs)
